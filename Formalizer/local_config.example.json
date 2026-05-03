@@ -1,0 +1,17 @@
+{
+  "input": "Input/problem.txt",
+  "uri": "neo4j://127.0.0.1:7687",
+  "user": "neo4j",
+  "password": "",
+  "database": "formalizer",
+  "document_id": "problem_txt",
+  "parser": "hybrid_text",
+  "openrouter_model": "openai/gpt-4o-mini",
+  "openrouter_api_key": "",
+  "openrouter_timeout": 90,
+  "openrouter_site_url": "",
+  "openrouter_app_name": "GSM8K-Solution-Verifier",
+  "constructed_out": "Formalizer/constructed_summary.txt",
+  "clear": true,
+  "dry_run": false
+}

@@ -1,0 +1,36 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Formalizer: Dry Run",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/Formalizer/build_problem_graph.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--dry-run"
+      ]
+    },
+    {
+      "name": "Formalizer: Import to Neo4j",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/Formalizer/build_problem_graph.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Formalizer: Import via OpenRouter",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/Formalizer/build_problem_graph.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--parser",
+        "llm_text"
+      ]
+    }
+  ]
+}

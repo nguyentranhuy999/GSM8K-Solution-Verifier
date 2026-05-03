@@ -1,0 +1,14 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Environment / secrets
+.env
+.env.*
+*.env
+
+# Local app secrets
+Formalizer/local_config.json
+
+# Local generated outputs
+Formalizer/constructed_summary.txt
