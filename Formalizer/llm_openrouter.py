@@ -104,6 +104,92 @@ def _build_constructed_text_prompt(problem_text: str) -> str:
     )
 
 
+def _build_oop_prompt(problem_text: str) -> str:
+    return (
+        "Convert the math word problem into a strict JSON object model, like OOP.\n"
+        "Return JSON only. No markdown, no explanations.\n\n"
+        "This is a formalizer, not a solver. Encode only facts stated or directly implied by the problem text.\n"
+        "Do not compute the final answer. Do not create solution steps, formulas, derivations, or arithmetic plans.\n\n"
+        "Top-level schema:\n"
+        "{\n"
+        '  "compact": "short human-readable expression",\n'
+        '  "classes": [\n'
+        "    {\n"
+        '      "name": "PascalCase class name",\n'
+        '      "description": "short role in the problem",\n'
+        '      "attributes": [\n'
+        '        {"name": "attribute_name", "type": "number|string|boolean|object_ref|null", "description": "short"}\n'
+        "      ]\n"
+        "    }\n"
+        "  ],\n"
+        '  "objects": [\n'
+        "    {\n"
+        '      "id": "snake_case_unique_id",\n'
+        '      "class": "PascalCase class name",\n'
+        '      "name": "short display name",\n'
+        '      "attributes": {"flat_key": "flat scalar value or list"}\n'
+        "    }\n"
+        "  ],\n"
+        '  "relationships": [\n'
+        "    {\n"
+        '      "type": "UPPERCASE_RELATION_TYPE",\n'
+        '      "source": "source_object_id",\n'
+        '      "target": "target_object_id",\n'
+        '      "attributes": {"value": 1, "unit": "item", "sentence": "source sentence"}\n'
+        "    }\n"
+        "  ],\n"
+        '  "question": {\n'
+        '    "id": "question_object_id",\n'
+        '    "class": "Question",\n'
+        '    "name": "short question name",\n'
+        '    "asks": "what must be found",\n'
+        '    "target": "object_id being asked for or null",\n'
+        '    "attributes": {"flat_key": "flat scalar value or list"}\n'
+        "  }\n"
+        "}\n\n"
+        "Rules:\n"
+        "- Always include compact.\n"
+        "- compact must be one short expression with no explanation, optimized for human debugging.\n"
+        "- compact should use nested notation like target:20day(1day(Nancy(double_espresso($3),iced_coffee($2.5)))).\n"
+        "- If the question asks after/for N days/weeks/months/years, compact root must be target:Nunit(...), e.g. target:20day(...).\n"
+        "- If the problem describes a repeated daily pattern, compact should group it as 1day(Person(item($price),item($price))).\n"
+        "- compact should prefer names, periods, prices, rates, quantities, and target. Avoid verbose labels.\n"
+        "- Treat classes as reusable concepts, and objects as instances in this specific problem.\n"
+        "- Include every explicit number as a Quantity, MoneyAmount, Rate, TimePeriod, or Count object.\n"
+        "- Represent the requested unknown as a Question object, not as a solved answer.\n"
+        "- Do not use classes named ComputationStep, Solution, Answer, Derivation, or CalculationStep.\n"
+        "- Do not use relationship types INPUT_TO, OUTPUTS, SOLVES, COMPUTES, CALCULATES, or DERIVES.\n"
+        "- Keep relationship types uppercase with underscores, such as HAS_QUANTITY, COSTS, OCCURS_EVERY, HAS_PRICE, ASKS_FOR.\n"
+        "- Object ids must be unique snake_case strings.\n"
+        "- attributes must be flat JSON values; do not put nested objects inside attributes.\n"
+        "- Use null only when genuinely unknown.\n\n"
+        "Example:\n"
+        "{\n"
+        '  "compact": "target:20day(1day(Nancy(double_espresso($3),iced_coffee($2.5))))",\n'
+        '  "classes": [\n'
+        '    {"name":"Person","description":"Actor in the problem","attributes":[]},\n'
+        '    {"name":"Item","description":"Thing counted or bought","attributes":[]},\n'
+        '    {"name":"MoneyAmount","description":"Dollar amount","attributes":[{"name":"amount","type":"number","description":"numeric dollars"}]},\n'
+        '    {"name":"Quantity","description":"Count of an item","attributes":[{"name":"amount","type":"number","description":"numeric count"}]},\n'
+        '    {"name":"Question","description":"Unknown requested by the problem","attributes":[]}\n'
+        "  ],\n"
+        '  "objects": [\n'
+        '    {"id":"an","class":"Person","name":"An","attributes":{}},\n'
+        '    {"id":"binh","class":"Person","name":"Binh","attributes":{}},\n'
+        '    {"id":"keo","class":"Item","name":"keo","attributes":{}},\n'
+        '    {"id":"an_keo_50","class":"Quantity","name":"50 keo","attributes":{"amount":50,"unit":"keo"}},\n'
+        '    {"id":"difference_3_keo","class":"Quantity","name":"3 keo less","attributes":{"amount":3,"unit":"keo","comparison":"less_than"}}\n'
+        "  ],\n"
+        '  "relationships": [\n'
+        '    {"type":"HAS_QUANTITY","source":"an","target":"an_keo_50","attributes":{"sentence":"An has 50 candies."}},\n'
+        '    {"type":"LESS_THAN_BY","source":"binh","target":"an","attributes":{"amount":3,"unit":"keo","sentence":"Binh has 3 fewer candies than An."}}\n'
+        "  ],\n"
+        '  "question": {"id":"question_binh_keo","class":"Question","name":"Binh candies?","asks":"how many candies Binh has","target":"binh","attributes":{"unit":"keo"}}\n'
+        "}\n\n"
+        f"Problem:\n{problem_text.strip()}\n"
+    )
+
+
 def _call_openrouter_text(
     *,
     prompt: str,
@@ -243,3 +329,37 @@ def extract_constructed_text(
     if not text:
         raise OpenRouterError("OpenRouter constructed text output is empty.")
     return text
+
+
+def extract_oop_problem(
+    problem_text: str,
+    *,
+    api_key: str,
+    model: str,
+    timeout_sec: int = 90,
+    site_url: Optional[str] = None,
+    app_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    if not api_key:
+        raise OpenRouterError("Missing OpenRouter API key.")
+    if not model:
+        raise OpenRouterError("Missing OpenRouter model name.")
+
+    text = _call_openrouter_text(
+        prompt=_build_oop_prompt(problem_text),
+        api_key=api_key,
+        model=model,
+        timeout_sec=timeout_sec,
+        site_url=site_url,
+        app_name=app_name,
+        as_json_object=True,
+    )
+
+    model_data = _extract_json_object(text)
+    if "classes" not in model_data:
+        model_data["classes"] = []
+    if "objects" not in model_data:
+        model_data["objects"] = []
+    if "relationships" not in model_data:
+        model_data["relationships"] = []
+    return model_data

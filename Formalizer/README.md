@@ -1,38 +1,39 @@
-# Formalizer - Semantic Graph to Neo4j
+# Formalizer - OOP Problem Graph to Neo4j
 
-Script `build_problem_graph.py` reads text from `Input/problem.txt`, extracts semantic relations from math word problems, and writes a graph into Neo4j.
-It supports a 2-step LLM flow: `raw problem -> constructed summary text -> graph`.
+Script `build_problem_graph.py` reads text from `Input/problem.txt`, encodes the problem as OOP-style classes/objects/relationships, and optionally writes the graph into Neo4j.
+The recommended flow is: `raw problem -> compact expression + OOP JSON -> debug JSON -> Neo4j graph`.
 
 ## 1) Install dependencies
 
 ```bash
-python3 -m pip install -r Formalizer/requirements.txt
-python3 -m spacy download en_core_web_sm
+python3 -m pip install -r requirements.txt
 ```
 
-`en_core_web_sm` is optional. If not available, the script will fallback to rule-based extraction.
+The semantic fallback parser is rule-based and does not require a spaCy model.
 
 ## 2) Configure once
 
 Edit this file:
 
-`Formalizer/local_config.json`
+`local_config.json`
 
 Default values are set for Neo4j Desktop local instance:
 - `uri`: `neo4j://127.0.0.1:7687`
-- `database`: `neo4j`
+- `database`: `formalizer` or your Neo4j database name
 - `clear`: `true` (rebuild graph each run)
-- `parser`: `hybrid_text` (try OpenRouter constructed text first, fallback to semantic rules)
+- `parser`: `hybrid_oop` (try OpenRouter OOP JSON first, fallback to semantic rules)
 
 If `password` is left empty, script will prompt password at runtime.
 
 ### OpenRouter settings (optional but recommended)
 
-In `Formalizer/local_config.json`:
-- `parser`: `llm_text` or `hybrid_text`
+In `local_config.json`:
+- `parser`: `llm_oop` or `hybrid_oop`
 - `openrouter_model`: e.g. `openai/gpt-4o-mini`
 - `openrouter_api_key`: your key (or leave empty and use env var)
-- `constructed_out`: where constructed summary text is saved
+- `oop_out`: where raw OOP classes/objects JSON is saved
+- `compact_out`: where the short human-readable expression is saved
+- `debug_out`: where parsed graph debug JSON is saved after every run
 
 Or set env var:
 
@@ -59,31 +60,72 @@ python3 Formalizer/build_problem_graph.py \
   --clear
 ```
 
-Force LLM JSON-only mode:
+Force LLM OOP mode:
 
 ```bash
-python3 Formalizer/build_problem_graph.py --parser llm
+python3 Formalizer/build_problem_graph.py --parser llm_oop
 ```
 
-Force LLM constructed-text mode:
+Hybrid OOP mode (recommended):
 
 ```bash
-python3 Formalizer/build_problem_graph.py --parser llm_text
+python3 Formalizer/build_problem_graph.py --parser hybrid_oop
 ```
 
-Hybrid JSON mode (LLM JSON first, fallback semantic):
+Legacy relation JSON mode, kept only for comparison:
 
 ```bash
-python3 Formalizer/build_problem_graph.py --parser hybrid
+python3 Formalizer/build_problem_graph.py --parser llm_json
 ```
 
-Hybrid constructed-text mode (recommended):
+Legacy constructed-text mode, kept only for comparison:
 
 ```bash
 python3 Formalizer/build_problem_graph.py --parser hybrid_text
 ```
 
-### Constructed text DSL
+### Debug outputs
+
+After each run, open:
+
+```text
+Formalizer/graph_debug.json
+```
+
+This file shows the parsed `classes`, `objects`, `relationships`, backend used, and any LLM fallback error.
+
+When the LLM OOP parser succeeds, open:
+
+```text
+Formalizer/compact_model.txt
+Formalizer/oop_model.json
+```
+
+`compact_model.txt` is the short view for humans, for example:
+
+```text
+target:20day(1day(Nancy(double_espresso($3),iced_coffee($2.5))))
+```
+
+`oop_model.json` is the machine-readable class/object model returned by OpenRouter before it is converted into Neo4j graph nodes.
+
+## Parser files
+
+The file layout is intentionally split by responsibility:
+
+```text
+Formalizer/
+  build_problem_graph.py      # main runner/orchestrator
+  graph_model.py              # Node, Edge, Neo4j write, debug JSON
+  llm_openrouter.py           # OpenRouter calls and prompts
+  parsers/
+    oop_parser.py             # main parser: OOP JSON -> graph
+    semantic_parser.py        # rule-based fallback
+    legacy_json_parser.py     # old JSON parser for comparison
+    legacy_text_parser.py     # old DSL parser for comparison
+```
+
+### Legacy constructed text DSL
 
 `llm_text` / `hybrid_text` asks OpenRouter to output lines like:
 
@@ -127,26 +169,11 @@ MATCH (n)-[r]->(m) RETURN n, r, m
 
 ## Graph model
 
-Nodes:
-- `(:Problem {key, name})`
-- `(:Person {key, name})`
-- `(:Item {key, name})`
-- `(:Period {key, name})`
-- `(:Quantity {key, name, amount, unit, kind})`
+OOP mode creates:
+- `(:Class)` nodes for class definitions
+- one node per problem object, labeled by its class name, e.g. `(:Person)`, `(:Item)`, `(:Quantity)`
+- `(:Problem)-[:CONTAINS_OBJECT]->(:Object)`
+- `(:Object)-[:INSTANCE_OF]->(:Class)`
+- relationships returned by the LLM, e.g. `HAS_QUANTITY`, `HAS_PRICE`, `OCCURS_EVERY`, `ASKS_FOR`
 
-Main relationships:
-- `(:Person)-[:HAS_QUANTITY]->(:Item)`
-- `(:Person)-[:GAINS_QUANTITY]->(:Item)`
-- `(:Person)-[:LOSES_QUANTITY]->(:Item)`
-- `(:Person)-[:TRANSFER_TO]->(:Person)` with property `item`
-- `(:Person|:Problem)-[:ASKS_FOR]->(:Item)`
-- `(:Person)-[:RATE_MULTIPLIER]->(:Person)`
-- `(:Person)-[:LESS_THAN_BY]->(:Person)` (difference relation from constructed text)
-- `(:Person)-[:MORE_THAN_BY]->(:Person)` (difference relation from constructed text)
-- `(:Person)-[:TIMES_OF]->(:Person)` (multiplicative relation from constructed text)
-- `(:Item)-[:UNIT_RATE]->(:Item)` (example: `show -> minute`, value `50`)
-- `(:Person)-[:OWNS_ITEM]->(:Item)`
-- `(:Person)-[:HAS_VALUE]->(:Item)` (example: bought for `20000 USD`)
-- `(:Item)-[:VALUE_DECREASE_PER_PERIOD]->(:Period)` (example: `1000 USD / year`)
-- `(:Person|:Problem)-[:ASKS_WORTH_AFTER]->(:Item)` (example: after `6 year`)
-- `(:Person|:Item)-[:HAS_QUANTITY_VALUE]->(:Quantity)-[:DESCRIBES]->(:Person|:Item)`
+The OOP prompt is intentionally a formalizer only. It asks the LLM not to create solution steps, formulas, final answers, or computation plans.
