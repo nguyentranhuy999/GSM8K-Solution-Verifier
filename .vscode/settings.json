@@ -1,0 +1,8 @@
+{
+  "code-runner.executorMap": {
+    "python": "python3 -u"
+  },
+  "code-runner.cwd": "${workspaceFolder}",
+  "code-runner.runInTerminal": true,
+  "python.defaultInterpreterPath": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+}
