@@ -7,12 +7,3 @@ __pycache__/
 .env.*
 *.env
 
-# Local app secrets
-local_config.json
-Formalizer/local_config.json
-
-# Local generated outputs
-Formalizer/constructed_summary.txt
-Formalizer/oop_model.json
-Formalizer/graph_debug.json
-Formalizer/compact_model.txt
