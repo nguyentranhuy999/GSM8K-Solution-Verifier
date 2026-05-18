@@ -186,8 +186,56 @@ Problem:
     ) -> dict[str, dict[str, Any]]:
         yaml_text = self.clean_yaml_text(raw_output)
         parsed = yaml.safe_load(yaml_text)
+        self.normalize_target(parsed, problem)
         self.validate_entities(parsed, problem)
         return parsed
+
+    def normalize_target(self, entities: Any, problem: str) -> None:
+        if not isinstance(entities, dict):
+            return
+
+        inferred_target = self.infer_target_from_question(problem)
+        if not inferred_target:
+            return
+
+        target_name, target_unit = inferred_target
+        existing_targets = [
+            name
+            for name, fields in entities.items()
+            if isinstance(fields, dict) and fields.get("location") == "target"
+        ]
+
+        for name in existing_targets:
+            if name != target_name and name in entities:
+                del entities[name]
+
+        entities[target_name] = {
+            "value": "",
+            "unit": target_unit,
+            "location": "target",
+        }
+
+    def infer_target_from_question(self, problem: str) -> tuple[str, str] | None:
+        question = self.extract_question(problem)
+        normalized_question = question.lower()
+
+        if "end up with" in normalized_question and "token" in normalized_question:
+            return ("tokens_remaining", "tokens")
+
+        if (
+            any(phrase in normalized_question for phrase in ("remain", "remaining", "left"))
+            and "token" in normalized_question
+        ):
+            return ("tokens_remaining", "tokens")
+
+        return None
+
+    def extract_question(self, problem: str) -> str:
+        parts = [part.strip() for part in problem.split("?") if part.strip()]
+        if not parts:
+            return problem.strip()
+
+        return parts[-1]
 
     def validate_entities(self, entities: Any, problem: str) -> None:
         if not isinstance(entities, dict):

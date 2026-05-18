@@ -2,19 +2,23 @@ tokens_start:
   value: 36
   unit: tokens
   location: input
-fraction_wasted_pac_man:
+wasted_on_pac_man:
   value: 0.33
   unit: ''
   location: input
-fraction_wasted_candy_crush:
+wasted_on_candy_crush:
   value: 0.25
   unit: ''
   location: input
-tokens_wasted_ski_ball:
+wasted_on_ski_ball:
   value: 7
   unit: tokens
   location: input
-tokens_end:
+tokens_received:
+  value: 7
+  unit: ''
+  location: input
+tokens_remaining:
   value: ''
   unit: tokens
   location: target
