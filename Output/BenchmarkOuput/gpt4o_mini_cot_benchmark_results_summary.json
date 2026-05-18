@@ -1,0 +1,18 @@
+{
+  "model": "openai/gpt-4o-mini",
+  "mode": "cot",
+  "input": "/Users/nguyentranhuy/GSM8K-Solution-Verifier/Benchmark/GSM8K Benchmark.csv",
+  "output": "/Users/nguyentranhuy/GSM8K-Solution-Verifier/Output/gpt4o_mini_cot_benchmark_results.csv",
+  "total_limit": 200,
+  "completed_rows": 200,
+  "pending_rows": 0,
+  "successful_api_rows": 200,
+  "correct_rows": 189,
+  "wrong_rows": 11,
+  "error_rows": 0,
+  "accuracy": 0.945,
+  "accuracy_percent": 94.5,
+  "progress": 1.0,
+  "progress_percent": 100.0,
+  "updated_at": "2026-05-17T06:42:24"
+}

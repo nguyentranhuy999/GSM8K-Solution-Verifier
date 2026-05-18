@@ -1,0 +1,24 @@
+step1:
+  expr: tokens_start * fraction_wasted_pac_man
+  result: tokens_wasted_pac_man
+  result_unit: tokens
+step2:
+  expr: tokens_start * fraction_wasted_candy_crush
+  result: tokens_wasted_candy_crush
+  result_unit: tokens
+step3:
+  expr: tokens_wasted_pac_man + tokens_wasted_candy_crush + tokens_wasted_ski_ball
+  result: total_tokens_wasted
+  result_unit: tokens
+step4:
+  expr: tokens_start - total_tokens_wasted
+  result: tokens_after_waste
+  result_unit: tokens
+step5:
+  expr: tokens_wasted_ski_ball * 7
+  result: tokens_received_from_parents
+  result_unit: tokens
+step6:
+  expr: tokens_after_waste + tokens_received_from_parents
+  result: tokens_end
+  result_unit: tokens

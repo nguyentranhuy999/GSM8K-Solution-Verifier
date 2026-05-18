@@ -1,289 +1,356 @@
-"""
-ProblemFormalizer.py
-
-Nhiệm vụ:
-- Đọc đề bài từ Input/problem.txt
-- Gửi đề bài qua LLM bằng OpenRouter API
-- Yêu cầu LLM trích xuất các thực thể trong đề bài thành cấu trúc có 4 trường:
-    value: giá trị được cho trong đề bài, hoặc tên biến target nếu là mục tiêu
-    type: "units" hoặc "scaler"
-    unit: đơn vị của thực thể, ví dụ: dollars, days, apples, people, ...
-    location: "input", "computed", hoặc "target"
-- Lưu kết quả ra Output/formalized_problem.yaml
-
-Lưu ý về type:
-- "units": thực thể có cùng loại đơn vị với target hoặc là đại lượng chính cần tính.
-- "scaler": thực thể dùng để nhân/chia/tính toán theo đề bài, thường là số lần, số ngày, số người, tỉ lệ, phần trăm, v.v.
-
-Cách dùng:
-1. Cài package:
-   pip install requests pyyaml python-dotenv
-
-2. Tạo file .env:
-   OPENROUTER_API_KEY=your_openrouter_api_key
-   OPENROUTER_MODEL=openai/gpt-4o-mini
-
-3. Chạy:
-   python ProblemFormalizer.py
-"""
-
 from __future__ import annotations
 
-import json
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import requests
 import yaml
 from dotenv import load_dotenv
 
 
-@dataclass
-class ProblemFormalizerConfig:
-    input_path: Path = Path("Input/problem.txt")
-    output_path: Path = Path("Output/formalized_problem.yaml")
+@dataclass(frozen=True)
+class FormalizerConfig:
+    input_path: Path = Path("Input/Problem.txt")
+    output_path: Path = Path("Output/ProblemEntities.yaml")
+    plan_path: Path = Path("Output/PlanEntities.yaml")
     model: str = "openai/gpt-4o-mini"
-    temperature: float = 0.0
+    timeout_seconds: int = 60
     max_tokens: int = 1200
-    timeout_seconds: int = 30
+    max_retries: int = 2
 
 
 class ProblemFormalizer:
-    def __init__(self, config: Optional[ProblemFormalizerConfig] = None) -> None:
+    def __init__(self, config: FormalizerConfig | None = None) -> None:
         load_dotenv()
-        self.config = config or ProblemFormalizerConfig()
+        self.config = config or FormalizerConfig()
         self.api_key = os.getenv("OPENROUTER_API_KEY")
         self.model = os.getenv("OPENROUTER_MODEL", self.config.model)
 
         if not self.api_key:
-            raise EnvironmentError(
-                "Missing OPENROUTER_API_KEY. Please set it in your .env file or environment variables."
-            )
+            raise EnvironmentError("Missing OPENROUTER_API_KEY in .env.")
 
     def read_problem(self) -> str:
         if not self.config.input_path.exists():
             raise FileNotFoundError(f"Cannot find input file: {self.config.input_path}")
 
-        problem_text = self.config.input_path.read_text(encoding="utf-8").strip()
-        if not problem_text:
+        problem = self.config.input_path.read_text(encoding="utf-8").strip()
+        if not problem:
             raise ValueError(f"Input file is empty: {self.config.input_path}")
 
-        return problem_text
+        return problem
 
-    def build_prompt(self, problem_text: str) -> str:
+    def build_prompt(self, problem: str, previous_error: str | None = None) -> str:
+        retry_note = ""
+        if previous_error:
+            retry_note = f"""
+
+Your previous output was rejected for this reason:
+{previous_error}
+
+Return a corrected YAML now. Remove all computed/intermediate entities.
+""".rstrip()
+
         return f"""
-You are a math word-problem formalizer.
+You are a strict Problem Formalizer for grade-school math word problems.
 
-Your task is to read the problem and extract entities into a clean YAML-compatible JSON object.
+Task:
+Extract ONLY entities whose numeric values are explicitly stated in the problem,
+plus exactly one target entity for the answer being asked.
 
-Each entity must have exactly these fields:
-- value: the numeric value explicitly given in the problem. For the target, use the variable name being asked for.
-- type: either "units" or "scaler".
-- unit: the unit of the entity, such as dollars, days, weeks, apples, people, puppies, percent, ratio, etc.
-- location: one of "input", "computed", or "target".
+Output format:
+- Return ONLY valid YAML.
+- Do not use markdown fences.
+- Do not explain.
+- The top-level YAML object maps snake_case entity names to exactly 3 fields:
+  value, unit, location.
 
-Type rules:
-- Use "units" for entities that have the same unit category as the target answer or represent the main quantity being accumulated, shared, paid, counted, bought, etc.
-- Use "scaler" for entities used to scale, multiply, divide, repeat, split, or compare quantities, such as days, weeks, months, people, roommates, times, fractions, percentages, or rates.
-- Even if a scaler has a real-world unit like days or people, it should still be type "scaler" when its role is to scale another value.
+Allowed fields:
+  value:
+    - numeric value for explicit inputs.
+    - empty string "" for the target.
+    - convert number words to numbers, e.g. "six" -> 6.
+    - convert fractions/percentages/scalars to numbers, e.g. 1/4 -> 0.25,
+      10% -> 0.10, seven times -> 7.
+  unit:
+    - original unit category, e.g. dollars, days, tabs, coffees, inches.
+    - use "" for pure scalars/fractions/multipliers.
+  location:
+    - "input" for explicit values from the problem.
+    - "target" for the final asked quantity.
 
-Location rules:
-- "input": values explicitly given in the problem.
-- "computed": intermediate variables that are useful for solving the problem, but do not appear directly as the final answer.
-- "target": the final quantity being asked for.
+Strict rules:
+- Do NOT solve the problem.
+- Do NOT compute intermediate values.
+- Do NOT include values that require arithmetic.
+- Do NOT create variables like after_first, remaining_after_second,
+  tabs_closed_first, total_cost_per_day, total_spent, etc.
+- For phrases like "closed 1/4 of the remaining tabs", include only the explicit
+  fraction 0.25 as an input scalar. Do not compute how many tabs were closed.
+- For phrases like "closed half of the remaining tabs", include only the explicit
+  fraction 0.5 as an input scalar.
+- Fractions, percentages, ratios, and multipliers written in the problem are
+  allowed as scalar input entities.
+- The target entity must have value: "".
+- There must be exactly one target entity.
+- The target must represent the exact quantity asked in the final question.
+- If the question asks "how many ... end up with", "how many ... remain", or
+  "how many ... left", the target is the final remaining quantity, not a
+  purchased/received/spent/intermediate quantity.
 
-Naming rules:
-- Use clear snake_case variable names.
-- Do not use spaces in variable names.
-- Avoid vague names like number_1 or value_2.
-- Include a target entity.
-- Include useful computed entities only if they are clearly needed.
+Example problem:
+Nancy buys 2 coffees a day. She grabs a double espresso for $3.00 every morning.
+In the afternoon, she grabs an iced coffee for $2.50. After 20 days, how much
+money has she spent on coffee?
 
-Output rules:
-- Return ONLY valid JSON.
-- Do not include markdown fences.
-- Do not include explanation.
-- The top-level object should map variable names to their entity fields.
-
-Example output format:
-{{
-  "morning_coffee_price": {{
-    "value": 3.00,
-    "type": "units",
-    "unit": "dollars",
-    "location": "input"
-  }},
-  "days": {{
-    "value": 20,
-    "type": "scaler",
-    "unit": "days",
-    "location": "input"
-  }},
-  "total_cost": {{
-    "value": "total_cost",
-    "type": "units",
-    "unit": "dollars",
-    "location": "target"
-  }}
-}}
+Example output:
+coffees_per_day:
+  value: 2
+  unit: coffees
+  location: input
+morning_coffee_price:
+  value: 3.00
+  unit: dollars
+  location: input
+afternoon_coffee_price:
+  value: 2.50
+  unit: dollars
+  location: input
+days:
+  value: 20
+  unit: days
+  location: input
+total_cost:
+  value: ""
+  unit: dollars
+  location: target
 
 Problem:
-{problem_text}
+{problem}
+{retry_note}
 """.strip()
 
     def call_openrouter(self, prompt: str) -> str:
-        url = "https://openrouter.ai/api/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost",
-            "X-Title": "Problem Formalizer",
-        }
-        payload = {
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You extract structured entities from math word problems. Return only valid JSON.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
-        }
-
-        try:
-            response = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=self.config.timeout_seconds,
-            )
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            raise RuntimeError(
-                "OpenRouter request failed. Check internet access, API key, and model name."
-            ) from exc
+        response = requests.post(
+            url="https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "http://localhost",
+                "X-Title": "Problem Formalizer",
+            },
+            json={
+                "model": self.model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You extract explicit math problem entities into "
+                            "strict YAML. Never solve the problem."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.0,
+                "max_tokens": self.config.max_tokens,
+            },
+            timeout=self.config.timeout_seconds,
+        )
+        response.raise_for_status()
 
         data = response.json()
         try:
-            choice = data["choices"][0]
-            message = choice["message"]
+            content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError) as exc:
-            raise ValueError(f"Unexpected OpenRouter response format: {data}") from exc
-
-        content = message.get("content")
-        if isinstance(content, list):
-            content = "\n".join(
-                part.get("text", "")
-                for part in content
-                if isinstance(part, dict) and part.get("text")
-            )
+            raise ValueError(f"Unexpected OpenRouter response: {data}") from exc
 
         if not isinstance(content, str) or not content.strip():
-            finish_reason = choice.get("finish_reason")
-            message_keys = sorted(message.keys())
-            raise ValueError(
-                "OpenRouter returned an empty assistant message. "
-                f"model={self.model!r}, finish_reason={finish_reason!r}, "
-                f"message_keys={message_keys}. "
-                "Try a chat model that returns text content, for example openai/gpt-4o-mini."
-            )
+            raise ValueError(f"OpenRouter returned empty content: {data}")
 
         return content
 
-    def extract_json(self, raw_text: str) -> Dict[str, Any]:
-        """Parse JSON even if the model accidentally wraps it in markdown fences."""
-        text = raw_text.strip()
-
+    def clean_yaml_text(self, text: str) -> str:
+        text = text.strip()
         if text.startswith("```"):
-            text = re.sub(r"^```(?:json)?", "", text).strip()
+            text = re.sub(r"^```(?:yaml|yml)?", "", text).strip()
             text = re.sub(r"```$", "", text).strip()
+        return text
 
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-            if not match:
-                raise ValueError(f"Model did not return valid JSON:\n{text}")
-            parsed = json.loads(match.group(0))
-
-        self.validate_entities(parsed)
+    def parse_entities(
+        self,
+        raw_output: str,
+        problem: str,
+    ) -> dict[str, dict[str, Any]]:
+        yaml_text = self.clean_yaml_text(raw_output)
+        parsed = yaml.safe_load(yaml_text)
+        self.validate_entities(parsed, problem)
         return parsed
 
-    def validate_entities(self, entities: Dict[str, Any]) -> None:
+    def validate_entities(self, entities: Any, problem: str) -> None:
         if not isinstance(entities, dict):
-            raise ValueError("Formalized output must be a JSON object.")
-
-        required_fields = {"value", "type", "unit", "location"}
-        valid_types = {"units", "scaler"}
-        valid_locations = {"input", "computed", "target"}
+            raise ValueError("Output YAML must be a dictionary.")
 
         target_count = 0
+        required_fields = {"value", "unit", "location"}
 
-        for name, entity in entities.items():
-            if not isinstance(name, str) or not name:
-                raise ValueError(f"Invalid entity name: {name}")
+        target_name = ""
 
-            if not isinstance(entity, dict):
-                raise ValueError(f"Entity '{name}' must be an object.")
+        for name, fields in entities.items():
+            if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", name):
+                raise ValueError(f"Invalid entity name: {name!r}")
 
-            fields = set(entity.keys())
-            if fields != required_fields:
+            if not isinstance(fields, dict):
+                raise ValueError(f"Entity {name!r} must be a dictionary.")
+
+            if set(fields.keys()) != required_fields:
                 raise ValueError(
-                    f"Entity '{name}' must have exactly fields {required_fields}, got {fields}"
+                    f"Entity {name!r} must have exactly fields: "
+                    "value, unit, location."
                 )
 
-            if entity["type"] not in valid_types:
+            location = fields["location"]
+            value = fields["value"]
+            unit = fields["unit"]
+
+            if location not in {"input", "target"}:
                 raise ValueError(
-                    f"Entity '{name}' has invalid type '{entity['type']}'. Expected one of {valid_types}."
+                    f"location of {name!r} must be either 'input' or 'target'."
                 )
 
-            if entity["location"] not in valid_locations:
-                raise ValueError(
-                    f"Entity '{name}' has invalid location '{entity['location']}'. Expected one of {valid_locations}."
-                )
+            if not isinstance(unit, str):
+                raise ValueError(f"unit of {name!r} must be a string.")
 
-            if entity["location"] == "target":
+            if location == "target":
                 target_count += 1
+                target_name = name
+                if value not in ("", None):
+                    raise ValueError(f"Target entity {name!r} must have empty value.")
+            else:
+                if self.looks_computed_name(name):
+                    raise ValueError(
+                        f"Input entity {name!r} looks computed. ProblemFormalizer "
+                        "must only extract explicit inputs and target."
+                    )
+
+                if not isinstance(value, (int, float)):
+                    raise ValueError(f"value of input entity {name!r} must be numeric.")
 
         if target_count != 1:
             raise ValueError(f"Expected exactly one target entity, got {target_count}.")
 
-    def save_yaml(self, entities: Dict[str, Any]) -> None:
+        self.validate_target_matches_question(target_name, problem)
+
+    def validate_target_matches_question(self, target_name: str, problem: str) -> None:
+        normalized_problem = problem.lower()
+        final_quantity_phrases = (
+            "end up with",
+            "ended up with",
+            "remain",
+            "remaining",
+            "left",
+            "have left",
+        )
+        misleading_target_markers = (
+            "received",
+            "bought",
+            "purchased",
+            "spent",
+            "wasted",
+            "used",
+            "lost",
+        )
+        final_target_markers = (
+            "final",
+            "remaining",
+            "left",
+            "end",
+            "ending",
+            "result",
+        )
+
+        asks_for_final_quantity = any(
+            phrase in normalized_problem for phrase in final_quantity_phrases
+        )
+        if not asks_for_final_quantity:
+            return
+
+        if any(marker in target_name for marker in misleading_target_markers):
+            raise ValueError(
+                f"Target {target_name!r} is an intermediate action quantity, but the "
+                "question asks for the final/remaining quantity."
+            )
+
+        if not any(marker in target_name for marker in final_target_markers):
+            raise ValueError(
+                f"Target {target_name!r} does not look like a final/remaining "
+                "quantity requested by the question."
+            )
+
+    def looks_computed_name(self, name: str) -> bool:
+        computed_markers = (
+            "after_",
+            "remaining_after",
+            "total_",
+            "_total",
+            "spent_total",
+            "closed_first",
+            "closed_second",
+            "closed_third",
+            "after_first",
+            "after_second",
+            "after_third",
+        )
+        return any(marker in name for marker in computed_markers)
+
+    def save_yaml(self, entities: dict[str, dict[str, Any]]) -> None:
         self.config.output_path.parent.mkdir(parents=True, exist_ok=True)
         with self.config.output_path.open("w", encoding="utf-8") as file:
             yaml.safe_dump(
                 entities,
                 file,
-                sort_keys=False,
                 allow_unicode=True,
+                sort_keys=False,
                 default_flow_style=False,
             )
 
-    def formalize(self) -> Dict[str, Any]:
-        print(f"Reading problem from {self.config.input_path}...", flush=True)
-        problem_text = self.read_problem()
-        prompt = self.build_prompt(problem_text)
-        print(f"Calling OpenRouter model {self.model}...", flush=True)
-        raw_response = self.call_openrouter(prompt)
-        print("Parsing model response...", flush=True)
-        entities = self.extract_json(raw_response)
-        print(f"Saving YAML to {self.config.output_path}...", flush=True)
+    def copy_to_plan_entities(self) -> None:
+        self.config.plan_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(self.config.output_path, self.config.plan_path)
+
+    def run(self) -> dict[str, dict[str, Any]]:
+        problem = self.read_problem()
+        previous_error: str | None = None
+        last_raw_output = ""
+
+        for attempt in range(1, self.config.max_retries + 1):
+            prompt = self.build_prompt(problem, previous_error)
+            raw_output = self.call_openrouter(prompt)
+            last_raw_output = raw_output
+
+            try:
+                entities = self.parse_entities(raw_output, problem)
+                break
+            except ValueError as exc:
+                previous_error = str(exc)
+                if attempt == self.config.max_retries:
+                    raise ValueError(
+                        f"Could not produce valid problem entities after "
+                        f"{attempt} attempts. Last raw output:\n{last_raw_output}"
+                    ) from exc
+
         self.save_yaml(entities)
+        self.copy_to_plan_entities()
         return entities
 
 
 def main() -> None:
     formalizer = ProblemFormalizer()
-    entities = formalizer.formalize()
-
-    print("Formalized problem saved successfully.")
-    print(f"Output path: {formalizer.config.output_path}")
-    print(yaml.safe_dump(entities, sort_keys=False, allow_unicode=True))
+    formalizer.run()
+    print(f"Saved problem entities to: {formalizer.config.output_path}")
+    print(f"Copied problem entities to: {formalizer.config.plan_path}")
 
 
 if __name__ == "__main__":

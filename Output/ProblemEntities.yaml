@@ -1,0 +1,20 @@
+tokens_start:
+  value: 36
+  unit: tokens
+  location: input
+fraction_wasted_pac_man:
+  value: 0.33
+  unit: ''
+  location: input
+fraction_wasted_candy_crush:
+  value: 0.25
+  unit: ''
+  location: input
+tokens_wasted_ski_ball:
+  value: 7
+  unit: tokens
+  location: input
+tokens_end:
+  value: ''
+  unit: tokens
+  location: target

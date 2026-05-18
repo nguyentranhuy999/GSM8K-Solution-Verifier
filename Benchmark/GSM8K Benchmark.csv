@@ -13,7 +13,7 @@ Total cost for 20 days is $5.50 + 20.
 $5.50 + 20 = $25.50.
 Therefore, the final answer is 25.5.",wrong relationship,yes,6,,"
 "
-"Ryan started with 36 tokens at the arcade. Ryan wasted a third of his tokens on Pac-Man, a fourth of his tokens on Candy Crush, and 7 on Ski-ball. Then, his parents bought him seven times as many tokens as he spent on Ski-ball. How many tokens did Ryan end up with?",22,"Ryan started with 36 tokens.
+"Ryan started with 36 tokens at the arcade. Ryan wasted a third of his tokens on Pac-Man, a fourth of his tokens on Candy Crush, and 7 on Ski-ball. Then, his parents bought him seven times as many tokens as he spent on Ski-ball. How many tokens did Ryan end up with?",57,"Ryan started with 36 tokens.
 He spent 1/3 of 36 = 12 tokens on Pac-Man.
 He spent 1/4 of 36 = 9 tokens on Candy Crush.
 He spent 7 tokens on Ski-ball.
@@ -745,11 +745,11 @@ Therefore, the final answer is 170.","The Carlo Rosi wine is 40 years old.
 
 The Twin Valley wine is 1/4 of the Carlo Rosi's age, so it is 10 years old.
 
-The Franzia wine is three times as old as the Carlo Rosi, so it is 30 years old.
+The Franzia wine is three times as old as the Carlo Rosi , so it is 30 years old.
 
 To find the total age, add the ages of all three wines: 30 + 40 + 10 = 80.
 
-Therefore, the final answer is 80.","misreading, wrong relationship, logic error",,,,
+Therefore, the final answer is 80.","misreading, wrong relationship, logic error",yes,3,,
 "Jason is trying to figure out whether he can afford a new car. The car he wants costs $32,000, and he can make a down payment of $8,000. He'll have to get a loan for the rest of the amount and make 48 equal monthly payments on it. Each month, he also has to pay interest equal to 5% of that month's payment. How much will Jason's monthly payments be?",525,"Let's find the amount Jason needs to borrow by subtracting the down payment from the car's price.
 $32,000 - $8,000 = $24,000 is the loan amount.
 
@@ -1695,17 +1695,17 @@ Therefore, the final answer is 22.","Tyler have 21 - 21 ÷ 3 + 8 = 23 CDs
 Therefore, the final answer is 23.","combine steps, wrong caculation",yes,1,,
 "Erin counts six trolls hiding by the path in the forest, 6 less than four times that number of trolls hiding under the bridge, and half as many trolls hiding in the plains as under the bridge. How many trolls did she count in total?",33,"Let's find the number of trolls hiding by the path: 6 trolls.
 
+The number of trolls under the bridge is 4 × 6 - 6 = 18 trolls.
+
+The number of trolls in the plains is half of those under the bridge: 18 ÷ 2 = 9 trolls.
+
+To find the total number of trolls, add all three groups: 6 + 18 + 9 = 33 trolls.
+
+Therefore, the final answer is 33.","Let's find the number of trolls hiding by the path: 6 trolls.
+
 The number of trolls under the bridge is 4 × 6 + 6 = 30 trolls.
 
-The number of trolls in the plains is half of those under the bridge: 30 ÷ 2 = 15 trolls.
-
-To find the total number of trolls, add all three groups: 6 + 30 + 15 = 51 trolls.
-
-Therefore, the final answer is 51.","Let's find the number of trolls hiding by the path: 6 trolls.
-
-The number of trolls under the bridge is 4 × 6 + 6 = 30 trolls.
-
-Therefore, the final answer is 30.",wrong target,yes,3,,
+Therefore, the final answer is 30.","wrong target, wrong relationship",yes,"2, 3",,
 "Two puppies, two kittens, and three parakeets were for sale at the pet shop.  The puppies were three times more expensive than the parakeets, and the parakeets were half as expensive as the kittens.  If the cost of one parakeet was $10, what would it cost to purchase all of the pets for sale at the pet shop, in dollars?",130,"One parakeet costs $10.
 
 Since there are three parakeets, the total cost for parakeets is $10 × 3 = $30.
@@ -1890,17 +1890,18 @@ Therefore, the final answer is 32.",spelling errors,no,,,
 At age 15, she added her second color.
 Each year after that, she added one more color.
 In three years, she will have 8 colors total.
-From age 15 to when she has 8 colors, she will have added 7 colors.
-If she adds one color per year, it takes 7 years to add 7 colors.
-Since she started at age 15 and will have 8 colors in 3 years, she must currently be 19 years old.
-Therefore, the final answer is 19.","Tabitha started with one natural hair color.
+Now she have added 8 - 3 = 5 colors total
+From age 15 to when she has 5 colors, it will be 5 - 2 = 3 years.
+If she adds one color per year, it takes 3 years to add 3 colors.
+Tabitha is 15 + 3 = 18 years old.
+Therefore, the final answer is 18.","Tabitha started with one natural hair color.
 At age fifteen, she added her second color.
 Each year after that, she added one more color.
 In three years, she will have eight colors total.
 From age fifteen to when she has eight colors, she will have added seven colors.
 If she adds one color per year, it takes seven years to add seven colors.
 Since she started at age fifteen and will have eight colors in three years, she must currently be nineteen years old.
-Therefore, the final answer is nineteen.",answer by word,no,,,
+Therefore, the final answer is nineteen.","answer by word, word problem, different calculation",yes,7,,
 "Terry sells 6 milkshakes for $5.50 each, nine burger platters for $11 each, and 20 sodas for $1.50 each. How much money does he make in total?",162,"Let's find the money made from milkshakes by multiplying 6 by $5.50:
 6 × $5.50 = $33.00
 
@@ -2228,7 +2229,7 @@ Libby needs to pay $35 for the dress, so she will spend $35 ÷ $0.25 = 140 quate
 To find how many quarters she'll have left, subtract 140 from 160.
 160 - 140 = 20
 Therefore, the final answer is 20.",different calculation,no,,,
-"An internet provider gives a 5% discount if the customer pays before the 25th day of the month. If the monthly internet rate is $50, how much did the customer pay in all for 4 months if he paid every 25th of the month?",190,"The monthly internet rate is $50.
+"An internet provider gives a 5% discount if the customer pays before the 25th day of the month. If the monthly internet rate is $50, how much did the customer pay in all for 4 months if he paid every 25th of the month?",200,"The monthly internet rate is $50.
 Since the customer paid on the 25th day of each month, they did not qualify for the 5% discount.
 The customer paid the full rate of $50 for each month.
 For 4 months, the total payment would be $50 × 4.
@@ -3041,16 +3042,14 @@ Therefore, the final answer is 34.","Jen earned 6 yams × 10 sweet potatoes × $
 
 Therefore, the final answer is 34.",combine steps,no,,,
 "Grace just started her own business. Each week, she charges 300 dollars. Grace's client will pay her every 2 weeks. How many weeks will it take for Grace to get 1800 dollars?",6,"Grace charges $300 per week for her services.
-She gets paid every 2 weeks by her client.
-In 2 weeks, Grace will earn $300 × 2 = $600.
 To find how many weeks it takes to earn $1800, divide $1800 by $300.
 $1800 ÷ $300 = 6
 Therefore, the final answer is 6.","Grace charges $300 per week for her services.
 She gets paid every 2 weeks by her client.
 In 2 weeks, Grace will earn $300 × 2 = $600.
-To find how many weeks it takes to earn $1800, divide $1800 by $300.
-$1800 ÷ $300 = 6
-Therefore, the final answer is 6.",,,,,
+To find how many weeks it takes to earn $1800, divide $1800 by $600.
+$1800 ÷ $600 = 3
+Therefore, the final answer is 3.","extra step, wrong relationship",yes,4,,
 Craig has 2 twenty dollar bills. He buys six squirt guns for $2 each.  He also buys 3 packs of water balloons for $3 each.  How much money does he have left?,19,"Craig starts with 2 twenty dollar bills, so he has $40.
 The squirt guns cost $2 each, and he buys 6 of them.
 The total cost for squirt guns is 6 × $2 = $12.
