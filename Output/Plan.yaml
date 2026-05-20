@@ -11,11 +11,11 @@ step2:
   result_grand_unit: tokens
   reported_expr: 36.00 * 0.25 = 9.00
 step3:
-  expr: tokens_wasted_ski_ball + tokens_wasted_pac_man + tokens_wasted_candy_crush
+  expr: tokens_wasted_pac_man + tokens_wasted_candy_crush + tokens_wasted_ski_ball
   result: total_wasted_tokens
   result_unit: tokens
   result_grand_unit: tokens
-  reported_expr: 7.000000000000000 + 11.999999999999998 + 9.000000000000000 = 27.999999999999998
+  reported_expr: 11.999999999999998 + 9.000000000000000 + 7.000000000000000 = 27.999999999999998
 step4:
   expr: initial_tokens - total_wasted_tokens
   result: remaining_tokens

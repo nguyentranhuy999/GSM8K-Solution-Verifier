@@ -5,6 +5,7 @@ initial_tokens:
   grand_unit: tokens
   expr: null
   formalized_expr: null
+  map: initial_tokens
 fraction_wasted_pac_man:
   value: 0.3333333333333333
   unit: null
@@ -12,6 +13,7 @@ fraction_wasted_pac_man:
   grand_unit: null
   expr: null
   formalized_expr: null
+  map: fraction_wasted_pac_man
 fraction_wasted_candy_crush:
   value: 0.25
   unit: null
@@ -19,6 +21,7 @@ fraction_wasted_candy_crush:
   grand_unit: null
   expr: null
   formalized_expr: null
+  map: fraction_wasted_candy_crush
 tokens_wasted_ski_ball:
   value: 7
   unit: tokens
@@ -26,6 +29,7 @@ tokens_wasted_ski_ball:
   grand_unit: tokens
   expr: null
   formalized_expr: null
+  map: tokens_wasted_ski_ball
 parent_token_multiplier:
   value: 7
   unit: null
@@ -33,21 +37,46 @@ parent_token_multiplier:
   grand_unit: null
   expr: null
   formalized_expr: null
+  map: parent_token_multiplier
 total_tokens:
   value: 57
   unit: tokens
   location: target
   grand_unit: tokens
-  expr: spent_tokens + (tokens_wasted_ski_ball * parent_token_multiplier)
-  formalized_expr: (initial_tokens - (initial_tokens * fraction_wasted_pac_man) -
-    (initial_tokens * fraction_wasted_candy_crush) - tokens_wasted_ski_ball) + (tokens_wasted_ski_ball
-    * parent_token_multiplier)
-spent_tokens:
-  value: 28
+  expr: initial_tokens - total_spent + new_tokens
+  formalized_expr: initial_tokens - (fraction_wasted_pac_man * initial_tokens + fraction_wasted_candy_crush
+    * initial_tokens + tokens_wasted_ski_ball) + parent_token_multiplier * tokens_wasted_ski_ball
+  map: total_tokens
+new_tokens:
+  value: 49
   unit: tokens
   location: step1
   grand_unit: tokens
-  expr: initial_tokens - (initial_tokens * fraction_wasted_pac_man) - (initial_tokens
-    * fraction_wasted_candy_crush) - tokens_wasted_ski_ball
-  formalized_expr: initial_tokens - (initial_tokens * fraction_wasted_pac_man) - (initial_tokens
-    * fraction_wasted_candy_crush) - tokens_wasted_ski_ball
+  expr: parent_token_multiplier * tokens_wasted_ski_ball
+  formalized_expr: parent_token_multiplier * tokens_wasted_ski_ball
+  map: tokens_from_parents
+tokens_wasted_pac_man:
+  value: 12
+  unit: tokens
+  location: step2
+  grand_unit: tokens
+  expr: fraction_wasted_pac_man * initial_tokens
+  formalized_expr: fraction_wasted_pac_man * initial_tokens
+  map: tokens_wasted_pac_man
+tokens_wasted_candy_crush:
+  value: 9
+  unit: tokens
+  location: step3
+  grand_unit: tokens
+  expr: fraction_wasted_candy_crush * initial_tokens
+  formalized_expr: fraction_wasted_candy_crush * initial_tokens
+  map: tokens_wasted_candy_crush
+total_spent:
+  value: 28
+  unit: tokens
+  location: step4
+  grand_unit: tokens
+  expr: tokens_wasted_pac_man + tokens_wasted_candy_crush + tokens_wasted_ski_ball
+  formalized_expr: fraction_wasted_pac_man * initial_tokens + fraction_wasted_candy_crush
+    * initial_tokens + tokens_wasted_ski_ball
+  map: total_wasted_tokens

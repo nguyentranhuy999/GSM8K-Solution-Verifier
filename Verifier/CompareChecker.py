@@ -10,7 +10,6 @@ Nhiệm vụ:
   - Output/StudentAnswerEntities.yaml
 - Ghi output vào:
   - Output/Diagnosis.yaml
-  - Output/Diagonosis.yaml  # legacy typo compatibility
   - Output/Wrong.yaml
 
 Các lỗi/nhãn:
@@ -60,7 +59,6 @@ STUDENT_PLAN_PATH = OUTPUT_DIR / "StudentPlan.yaml"
 STUDENT_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "StudentAnswerEntities.yaml"
 
 DIAGNOSIS_PATH = OUTPUT_DIR / "Diagnosis.yaml"
-LEGACY_DIAGONOSIS_PATH = OUTPUT_DIR / "Diagonosis.yaml"
 WRONG_PATH = OUTPUT_DIR / "Wrong.yaml"
 LOG_PATH = OUTPUT_DIR / "Log.yaml"
 
@@ -598,7 +596,6 @@ def run() -> None:
         diagnosis = remove_structural_label_if_all_right(diagnosis)
 
         write_yaml_file(DIAGNOSIS_PATH, diagnosis)
-        write_yaml_file(LEGACY_DIAGONOSIS_PATH, diagnosis)
         update_wrong_file(diagnosis)
 
         write_log("Pass CompareChecker")

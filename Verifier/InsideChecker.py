@@ -16,7 +16,6 @@ Nhiệm vụ:
        - Output/StudentAnswerEntities.yaml
      - Output:
        - Output/Diagnosis.yaml
-       - Output/Diagonosis.yaml  # legacy typo compatibility
 
 Cách chạy:
 - Mặc định check LLM/reference:
@@ -73,7 +72,6 @@ STUDENT_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "StudentAnswerEntities.yaml"
 
 ERROR_PATH = OUTPUT_DIR / "Error.yaml"
 DIAGNOSIS_PATH = OUTPUT_DIR / "Diagnosis.yaml"
-LEGACY_DIAGONOSIS_PATH = OUTPUT_DIR / "Diagonosis.yaml"
 WRONG_PATH = OUTPUT_DIR / "Wrong.yaml"
 LOG_PATH = OUTPUT_DIR / "Log.yaml"
 
@@ -705,7 +703,6 @@ def write_outputs(mode: str, errors: List[Dict[str, Any]]) -> None:
         write_yaml_file(ERROR_PATH, errors)
     else:
         write_yaml_file(DIAGNOSIS_PATH, errors)
-        write_yaml_file(LEGACY_DIAGONOSIS_PATH, errors)
 
     update_wrong_file(errors)
 

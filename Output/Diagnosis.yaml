@@ -1,0 +1,15 @@
+- diagnosis: wrong relationship
+  step: step5
+  entity: total_tokens
+- diagnosis: wrong relationship
+  step: step1
+  entity: new_tokens
+- diagnosis: wrong relationship
+  step: step2
+  entity: tokens_wasted_pac_man
+- diagnosis: wrong relationship
+  step: step3
+  entity: tokens_wasted_candy_crush
+- diagnosis: different calculation
+  step: null
+  entity: total_tokens

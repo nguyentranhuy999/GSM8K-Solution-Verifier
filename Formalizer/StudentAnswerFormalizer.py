@@ -63,13 +63,12 @@ PROBLEM_ENTITIES_PATH = OUTPUT_DIR / "ProblemEntities.yaml"
 STUDENT_PLAN_PATH = OUTPUT_DIR / "StudentPlan.yaml"
 STUDENT_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "StudentAnswerEntities.yaml"
 DIAGNOSIS_PATH = OUTPUT_DIR / "Diagnosis.yaml"
-# Một số code cũ có thể đang dùng nhầm Diagonosis.yaml; file chính ở đây là Diagnosis.yaml.
-LEGACY_DIAGONOSIS_PATH = OUTPUT_DIR / "Diagonosis.yaml"
 WRONG_PATH = OUTPUT_DIR / "Wrong.yaml"
 LOG_PATH = OUTPUT_DIR / "Log.yaml"
 
 DEFAULT_MODEL = "google/gemini-2.0-flash-001"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_MAX_RETRIES = 3
 
 
 class StudentAnswerFormalizerError(Exception):
@@ -231,13 +230,29 @@ Quy tắc output:
 """.strip()
 
 
-def build_user_prompt(problem: str, problem_entities: Dict[str, Any], student_answer: str) -> str:
+def build_user_prompt(
+    problem: str,
+    problem_entities: Dict[str, Any],
+    student_answer: str,
+    previous_error: Optional[str] = None,
+) -> str:
     problem_entities_yaml = yaml.safe_dump(
         problem_entities,
         allow_unicode=True,
         sort_keys=False,
         default_flow_style=False,
     )
+    required_equations = extract_equations_from_student_answer(student_answer)
+    retry_note = ""
+    if previous_error:
+        retry_note = f"""
+
+Output trước bị reject vì lỗi:
+{previous_error}
+
+Hãy sửa bằng cách tạo đủ step cho TẤT CẢ required reported_expr dưới đây, không bỏ dòng nào.
+""".rstrip()
+
     return f"""
 Hãy formalize bài làm học sinh sau.
 
@@ -249,6 +264,10 @@ Output/ProblemEntities.yaml:
 
 Input/StudentAnswer.txt:
 {student_answer}
+
+Required reported_expr theo đúng thứ tự, mỗi dòng là một step riêng:
+{yaml.safe_dump(required_equations, allow_unicode=True, sort_keys=False).strip()}
+{retry_note}
 """.strip()
 
 
@@ -256,7 +275,12 @@ Input/StudentAnswer.txt:
 # OpenRouter
 # -----------------------------------------------------------------------------
 
-def call_openrouter(problem: str, problem_entities: Dict[str, Any], student_answer: str) -> str:
+def call_openrouter(
+    problem: str,
+    problem_entities: Dict[str, Any],
+    student_answer: str,
+    previous_error: Optional[str] = None,
+) -> str:
     load_dotenv(ROOT_DIR / ".env")
     load_dotenv()
 
@@ -278,7 +302,15 @@ def call_openrouter(problem: str, problem_entities: Dict[str, Any], student_answ
         "model": model,
         "messages": [
             {"role": "system", "content": build_system_prompt()},
-            {"role": "user", "content": build_user_prompt(problem, problem_entities, student_answer)},
+            {
+                "role": "user",
+                "content": build_user_prompt(
+                    problem,
+                    problem_entities,
+                    student_answer,
+                    previous_error=previous_error,
+                ),
+            },
         ],
         "temperature": 0,
     }
@@ -562,6 +594,19 @@ def validate_reported_exprs_follow_student_answer(
         )
 
 
+def max_retries() -> int:
+    raw = os.getenv("STUDENT_FORMALIZER_MAX_RETRIES")
+    if raw is None:
+        return DEFAULT_MAX_RETRIES
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise StudentAnswerFormalizerError("STUDENT_FORMALIZER_MAX_RETRIES phải là số nguyên.") from exc
+    if value < 1:
+        raise StudentAnswerFormalizerError("STUDENT_FORMALIZER_MAX_RETRIES phải >= 1.")
+    return value
+
+
 def validate_problem_entities(raw_entities: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     required = {"value", "unit", "location", "grand_unit"}
     if not raw_entities:
@@ -621,8 +666,6 @@ def normalize_diagnosis(raw_diagnosis: List[Dict[str, Any]]) -> List[Dict[str, A
 
 def write_diagnosis_and_wrong(diagnosis: List[Dict[str, Any]]) -> None:
     write_yaml_file(DIAGNOSIS_PATH, diagnosis)
-    # Ghi thêm file legacy do user từng viết Diagonosis.yaml, để tránh module khác tìm tên cũ bị lỗi.
-    write_yaml_file(LEGACY_DIAGONOSIS_PATH, diagnosis)
 
     if diagnosis:
         WRONG_PATH.write_text("No\n", encoding="utf-8")
@@ -688,14 +731,8 @@ def formalize_expr(expr: str, formalized_by_entity: Dict[str, Optional[str]]) ->
 # -----------------------------------------------------------------------------
 
 def initial_student_entities(problem_entities: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    existing = read_yaml_file(STUDENT_ANSWER_ENTITIES_PATH, required=False)
-    if existing:
-        source = existing
-    else:
-        source = problem_entities
-
     entities: Dict[str, Dict[str, Any]] = {}
-    for name, entity in source.items():
+    for name, entity in problem_entities.items():
         validate_entity_name(name)
         if not isinstance(entity, dict):
             raise StudentAnswerFormalizerError(f"Entity {name} trong StudentAnswerEntities phải là dictionary.")
@@ -784,13 +821,35 @@ def run() -> None:
         raw_problem_entities = read_yaml_file(PROBLEM_ENTITIES_PATH, required=True)
         problem_entities = validate_problem_entities(raw_problem_entities)
 
-        raw_response = call_openrouter(problem, problem_entities, student_answer)
-        raw_student_plan, raw_diagnosis = parse_llm_output(raw_response)
+        previous_error: Optional[str] = None
+        last_validation_error: Optional[Exception] = None
+        student_plan: Optional[Dict[str, Any]] = None
+        diagnosis: List[Dict[str, Any]] = []
 
-        student_plan = validate_and_normalize_student_plan(raw_student_plan, problem_entities)
-        validate_reported_expr_grounded_in_student_answer(student_plan, student_answer)
-        validate_reported_exprs_follow_student_answer(student_plan, student_answer)
-        diagnosis = normalize_diagnosis(raw_diagnosis)
+        for _ in range(max_retries()):
+            raw_response = call_openrouter(
+                problem,
+                problem_entities,
+                student_answer,
+                previous_error=previous_error,
+            )
+
+            try:
+                raw_student_plan, raw_diagnosis = parse_llm_output(raw_response)
+                candidate_plan = validate_and_normalize_student_plan(raw_student_plan, problem_entities)
+                validate_reported_expr_grounded_in_student_answer(candidate_plan, student_answer)
+                validate_reported_exprs_follow_student_answer(candidate_plan, student_answer)
+            except StudentAnswerFormalizerError as exc:
+                previous_error = str(exc)
+                last_validation_error = exc
+                continue
+
+            student_plan = candidate_plan
+            diagnosis = normalize_diagnosis(raw_diagnosis)
+            break
+
+        if student_plan is None:
+            raise StudentAnswerFormalizerError(str(last_validation_error))
 
         write_yaml_file(STUDENT_PLAN_PATH, student_plan)
         write_diagnosis_and_wrong(diagnosis)
