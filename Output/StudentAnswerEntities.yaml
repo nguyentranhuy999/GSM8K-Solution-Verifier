@@ -1,0 +1,53 @@
+initial_tokens:
+  value: 36
+  unit: tokens
+  location: input
+  grand_unit: tokens
+  expr: null
+  formalized_expr: null
+fraction_wasted_pac_man:
+  value: 0.3333333333333333
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+fraction_wasted_candy_crush:
+  value: 0.25
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+tokens_wasted_ski_ball:
+  value: 7
+  unit: tokens
+  location: input
+  grand_unit: tokens
+  expr: null
+  formalized_expr: null
+parent_token_multiplier:
+  value: 7
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+total_tokens:
+  value: 57
+  unit: tokens
+  location: target
+  grand_unit: tokens
+  expr: spent_tokens + (tokens_wasted_ski_ball * parent_token_multiplier)
+  formalized_expr: (initial_tokens - (initial_tokens * fraction_wasted_pac_man) -
+    (initial_tokens * fraction_wasted_candy_crush) - tokens_wasted_ski_ball) + (tokens_wasted_ski_ball
+    * parent_token_multiplier)
+spent_tokens:
+  value: 28
+  unit: tokens
+  location: step1
+  grand_unit: tokens
+  expr: initial_tokens - (initial_tokens * fraction_wasted_pac_man) - (initial_tokens
+    * fraction_wasted_candy_crush) - tokens_wasted_ski_ball
+  formalized_expr: initial_tokens - (initial_tokens * fraction_wasted_pac_man) - (initial_tokens
+    * fraction_wasted_candy_crush) - tokens_wasted_ski_ball

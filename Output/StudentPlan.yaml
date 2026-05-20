@@ -1,0 +1,14 @@
+step1:
+  expr: initial_tokens - (initial_tokens * fraction_wasted_pac_man) - (initial_tokens
+    * fraction_wasted_candy_crush) - tokens_wasted_ski_ball
+  result: spent_tokens
+  result_unit: tokens
+  result_grand_unit: tokens
+  reported_expr: 12 + 9 + 7 = 28
+step2:
+  expr: spent_tokens + (tokens_wasted_ski_ball * parent_token_multiplier)
+  result: total_tokens
+  result_unit: tokens
+  result_grand_unit: tokens
+  reported_expr: 36 - 28 + 49 = 57
+target: total_tokens

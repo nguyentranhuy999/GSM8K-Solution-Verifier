@@ -1,20 +1,30 @@
-tokens_start:
+initial_tokens:
   value: 36
   unit: tokens
   location: input
+  grand_unit: tokens
 fraction_wasted_pac_man:
-  value: 0.33
-  unit: ''
+  value: 0.3333333333333333
+  unit: null
   location: input
+  grand_unit: null
 fraction_wasted_candy_crush:
   value: 0.25
-  unit: ''
+  unit: null
   location: input
-tokens_spent_ski_ball:
+  grand_unit: null
+tokens_wasted_ski_ball:
   value: 7
   unit: tokens
   location: input
-tokens_remaining:
-  value: ''
+  grand_unit: tokens
+parent_token_multiplier:
+  value: 7
+  unit: null
+  location: input
+  grand_unit: null
+total_tokens:
+  value: null
   unit: tokens
   location: target
+  grand_unit: tokens

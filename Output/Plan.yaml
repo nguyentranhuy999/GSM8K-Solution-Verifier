@@ -1,24 +1,36 @@
 step1:
-  expr: tokens_start * fraction_wasted_pac_man
-  result: tokens_spent_pac_man
+  expr: initial_tokens * fraction_wasted_pac_man
+  result: tokens_wasted_pac_man
   result_unit: tokens
+  result_grand_unit: tokens
+  reported_expr: 36.0000000000000000 * 0.3333333333333333 = 11.9999999999999988
 step2:
-  expr: tokens_start * fraction_wasted_candy_crush
-  result: tokens_spent_candy_crush
+  expr: initial_tokens * fraction_wasted_candy_crush
+  result: tokens_wasted_candy_crush
   result_unit: tokens
+  result_grand_unit: tokens
+  reported_expr: 36.00 * 0.25 = 9.00
 step3:
-  expr: tokens_spent_pac_man + tokens_spent_candy_crush + tokens_spent_ski_ball
-  result: total_tokens_spent
+  expr: tokens_wasted_ski_ball + tokens_wasted_pac_man + tokens_wasted_candy_crush
+  result: total_wasted_tokens
   result_unit: tokens
+  result_grand_unit: tokens
+  reported_expr: 7.000000000000000 + 11.999999999999998 + 9.000000000000000 = 27.999999999999998
 step4:
-  expr: tokens_start - total_tokens_spent
-  result: tokens_remaining_after_spending
+  expr: initial_tokens - total_wasted_tokens
+  result: remaining_tokens
   result_unit: tokens
+  result_grand_unit: tokens
+  reported_expr: 36.000000000000000 - 27.999999999999996 = 8.000000000000004
 step5:
-  expr: tokens_spent_ski_ball * 7
-  result: tokens_received_from_parents
+  expr: tokens_wasted_ski_ball * parent_token_multiplier
+  result: tokens_from_parents
   result_unit: tokens
+  result_grand_unit: tokens
+  reported_expr: 7 * 7 = 49
 step6:
-  expr: tokens_remaining_after_spending + tokens_received_from_parents
-  result: tokens_remaining
+  expr: remaining_tokens + tokens_from_parents
+  result: total_tokens
   result_unit: tokens
+  result_grand_unit: tokens
+  reported_expr: 8.000000000000004 + 49.000000000000000 = 57.000000000000004

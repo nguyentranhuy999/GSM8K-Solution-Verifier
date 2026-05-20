@@ -1,286 +1,590 @@
+"""
+Formalizer/Solver/Planner.py
+
+Nhiệm vụ:
+- Đọc đề bài từ Input/Problem.txt
+- Đọc các thực thể đề bài từ Output/ProblemEntities.yaml
+- Gọi LLM qua OpenRouter để sinh kế hoạch giải bài toán
+- Ghi kế hoạch vào Output/Plan.yaml
+- Sau khi có plan, dùng code Python để thêm các thực thể result vào Output/PlanEntities.yaml
+- Ghi trạng thái Pass Planner / Fail Planner vào Output/Log.yaml
+
+Yêu cầu .env:
+OPENROUTER_API_KEY=...
+OPENROUTER_MODEL=google/gemini-2.0-flash-001  # optional
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1/chat/completions  # optional
+
+Ghi chú:
+- LLM chỉ sinh kế hoạch symbolic, không phải nơi thực thi số học chính.
+- Các bước trong plan được đặt step1, step2, step3, ...
+- Mỗi step gồm:
+  - expr
+  - result
+  - result_unit
+  - result_grand_unit
+- Code có hỗ trợ đọc alias grand_result_unit từ output LLM, nhưng khi lưu sẽ chuẩn hóa thành result_grand_unit.
+"""
+
+from __future__ import annotations
+
+import json
 import os
 import re
-import json
+import sys
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict, List, Optional, Tuple
 
-import yaml
 import requests
-
+import yaml
 from dotenv import load_dotenv
 
 
-load_dotenv()
+ROOT_DIR = Path(__file__).resolve().parents[2]
+INPUT_PATH = ROOT_DIR / "Input" / "Problem.txt"
+OUTPUT_DIR = ROOT_DIR / "Output"
+PROBLEM_ENTITIES_PATH = OUTPUT_DIR / "ProblemEntities.yaml"
+PLAN_PATH = OUTPUT_DIR / "Plan.yaml"
+PLAN_ENTITIES_PATH = OUTPUT_DIR / "PlanEntities.yaml"
+LOG_PATH = OUTPUT_DIR / "Log.yaml"
+
+DEFAULT_MODEL = "google/gemini-2.0-flash-001"
+DEFAULT_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
-ROOT = Path(__file__).resolve().parents[2]
-
-PROBLEM_PATH = ROOT / "Input" / "Problem.txt"
-ENTITIES_PATH = ROOT / "Output" / "PlanEntities.yaml"
-PLAN_PATH = ROOT / "Output" / "Plan.yaml"
-
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+class PlannerError(Exception):
+    """Lỗi riêng cho Planner."""
 
 
-class Planner:
-    def __init__(self):
-        if not OPENROUTER_API_KEY:
-            raise EnvironmentError("Missing OPENROUTER_API_KEY")
+def ensure_dirs() -> None:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    def read_problem(self) -> str:
-        return PROBLEM_PATH.read_text(encoding="utf-8").strip()
 
-    def read_entities(self) -> Dict[str, Any]:
-        if not ENTITIES_PATH.exists():
-            raise FileNotFoundError(f"Cannot find entities file: {ENTITIES_PATH}")
+def read_yaml_file(path: Path, *, required: bool = True) -> Dict[str, Any]:
+    if not path.exists():
+        if required:
+            raise PlannerError(f"Không tìm thấy file: {path}")
+        return {}
 
-        with ENTITIES_PATH.open(encoding="utf-8") as file:
-            entities = yaml.safe_load(file)
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise PlannerError(f"File YAML không hợp lệ: {path} - {exc}") from exc
 
-        if not isinstance(entities, dict):
-            raise ValueError("PlanEntities.yaml must contain a dictionary")
+    if data is None:
+        return {}
 
-        return entities
+    if not isinstance(data, dict):
+        raise PlannerError(f"File YAML phải có dạng dictionary: {path}")
 
-    def build_prompt(self, problem: str, entities: Dict[str, Any]) -> str:
-        entities_yaml = yaml.safe_dump(
-            entities,
+    return data
+
+
+def write_yaml_file(path: Path, data: Dict[str, Any]) -> None:
+    ensure_dirs()
+    with path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(
+            data,
+            f,
             allow_unicode=True,
             sort_keys=False,
             default_flow_style=False,
-        ).strip()
-
-        return f"""
-You are a math word problem planner.
-
-Given a word problem and extracted entities, create a calculation plan.
-
-Problem:
-{problem}
-
-Extracted entities:
-{entities_yaml}
-
-Return ONLY valid JSON.
-
-Format:
-{{
-  "step1": {{
-    "expr": "entity_a + entity_b",
-    "result": "new_entity",
-    "result_unit": "unit"
-  }},
-  "step2": {{
-    "expr": "new_entity * entity_c",
-    "result": "target_entity",
-    "result_unit": "unit"
-  }}
-}}
-
-Rules:
-- Step names must be step1, step2, step3, ...
-- expr must use entity names from Extracted entities or previous step results.
-- result is the variable created by that step.
-- result_unit is the unit of result.
-- Do not calculate numeric values.
-- The final step result must answer the question.
-- The final step result must be the target entity from Extracted entities.
-- The final step result_unit must equal the target entity unit.
-- Use meaningful variable names based on the problem.
-- If a step computes one specific object type, use that object's unit.
-- Do not blindly normalize intermediate units to the target unit. For example,
-  if a step computes total pens, result_unit should be "pens"; only the final
-  aggregate answer should use "items" when the target unit is "items".
-- For unit conversion, write expressions like:
-  minutes / 60
-  hours * 60
-  dollars * 100
-
-Example:
-
-Problem:
-Nancy buys 2 coffees a day. She grabs a double espresso for $3.00 every morning.
-In the afternoon, she grabs an iced coffee for $2.50.
-After 20 days, how much money has she spent on coffee?
-
-Output:
-{{
-  "step1": {{
-    "expr": "morning_coffee_price + afternoon_coffee_price",
-    "result": "daily_cost",
-    "result_unit": "dollars"
-  }},
-  "step2": {{
-    "expr": "daily_cost * days",
-    "result": "total_cost",
-    "result_unit": "dollars"
-  }}
-}}
-""".strip()
-
-    def call_llm(self, prompt: str) -> str:
-        response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": OPENROUTER_MODEL,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You output strict JSON only."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                "temperature": 0
-            },
-            timeout=60
         )
 
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"OpenRouter error {response.status_code}: {response.text}"
+
+def write_log(status: str, message: str = "") -> None:
+    ensure_dirs()
+    log_data = read_yaml_file(LOG_PATH, required=False)
+    log_data["Planner"] = status
+    if message:
+        log_data["Planner_message"] = message
+    elif "Planner_message" in log_data:
+        del log_data["Planner_message"]
+    write_yaml_file(LOG_PATH, log_data)
+
+
+def read_problem() -> str:
+    if not INPUT_PATH.exists():
+        raise PlannerError(f"Không tìm thấy file: {INPUT_PATH}")
+
+    text = INPUT_PATH.read_text(encoding="utf-8").strip()
+    if not text:
+        raise PlannerError("Input/Problem.txt đang rỗng.")
+
+    return text
+
+
+def validate_problem_entities(entities: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    required_fields = {"value", "unit", "location", "grand_unit"}
+    normalized: Dict[str, Dict[str, Any]] = {}
+    target_count = 0
+
+    if not entities:
+        raise PlannerError("Output/ProblemEntities.yaml đang rỗng.")
+
+    for name, entity in entities.items():
+        if not isinstance(name, str) or not re.match(r"^[a-z][a-z0-9_]*$", name):
+            raise PlannerError(f"Tên entity không hợp lệ: {name!r}")
+
+        if not isinstance(entity, dict):
+            raise PlannerError(f"Entity {name} phải là dictionary.")
+
+        missing = required_fields - set(entity.keys())
+        if missing:
+            raise PlannerError(f"Entity {name} thiếu trường: {sorted(missing)}")
+
+        location = entity.get("location")
+        if location not in {"input", "target"}:
+            raise PlannerError(f"Entity {name} có location không hợp lệ: {location!r}")
+
+        if location == "target":
+            target_count += 1
+
+        normalized[name] = {
+            "value": normalize_empty(entity.get("value")),
+            "unit": normalize_empty(entity.get("unit")),
+            "location": location,
+            "grand_unit": normalize_empty(entity.get("grand_unit")),
+        }
+
+    if target_count != 1:
+        raise PlannerError(f"ProblemEntities phải có đúng 1 target, hiện có {target_count}.")
+
+    return normalized
+
+
+def normalize_empty(value: Any) -> Any:
+    if value == "" or value == "null" or value == "None":
+        return None
+    return value
+
+
+def build_system_prompt() -> str:
+    return """
+Bạn là một Planner sinh kế hoạch giải toán symbolic từ đề bài và danh sách entity đã formalize.
+
+Nhiệm vụ:
+- Sinh các bước tính toán cần thiết để đi từ entity input tới entity target.
+- Không tự thêm input entity mới không có trong ProblemEntities.
+- Được tạo entity trung gian bằng trường result.
+- Bước cuối cùng phải tạo ra đúng entity target đã có trong ProblemEntities.
+- Không thực hiện giải thích, chỉ trả YAML thuần.
+
+Mỗi bước có đúng 4 trường:
+- expr: biểu thức tính toán symbolic, dùng tên entity. Ví dụ: morning_coffee_price + afternoon_coffee_price
+- result: tên entity được tạo ra bởi bước đó.
+- result_unit: đơn vị của result. Với scalar có thể để rỗng/null.
+- result_grand_unit: grand unit của result theo target. Với scalar có thể để rỗng/null.
+
+Quy tắc step:
+- Tên bước phải là step1, step2, step3, ... liên tục, không bỏ số.
+- step sau được dùng result của step trước.
+- result phải là snake_case.
+- expr chỉ nên dùng tên entity, số hằng cần thiết, và toán tử đơn giản: +, -, *, /, parentheses.
+- Nếu cần đổi đơn vị, hãy tạo một step riêng. Ví dụ: hours * 60 -> minutes.
+- Với bước đổi đơn vị, expr vẫn phải thể hiện phép đổi đơn vị rõ ràng.
+
+Quy tắc không ảo giác:
+- Chỉ dùng entity trong ProblemEntities hoặc result của step trước.
+- Không tạo bước không cần thiết.
+- Không đưa value vào Plan.yaml.
+- Không tính toán ra số trong Plan.yaml.
+
+Quy tắc đơn vị:
+- result_unit là đơn vị trực tiếp của result.
+- result_grand_unit là đơn vị đối chiếu theo target.
+- Nếu result là target thì result_unit và result_grand_unit phải khớp với unit và grand_unit của target.
+
+Định dạng output bắt buộc:
+step1:
+  expr: entity_a + entity_b
+  result: intermediate_entity
+  result_unit: dollars
+  result_grand_unit: dollars
+
+step2:
+  expr: intermediate_entity * days
+  result: target_entity
+  result_unit: dollars
+  result_grand_unit: dollars
+
+Chỉ trả YAML thuần, không Markdown, không ``` và không giải thích.
+""".strip()
+
+
+def build_user_prompt(problem: str, entities: Dict[str, Dict[str, Any]]) -> str:
+    entities_yaml = yaml.safe_dump(
+        entities,
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
+    )
+
+    return f"""
+Hãy sinh kế hoạch giải toán cho đề bài sau.
+
+Đề bài:
+{problem}
+
+ProblemEntities.yaml:
+{entities_yaml}
+""".strip()
+
+
+def call_openrouter(problem: str, entities: Dict[str, Dict[str, Any]]) -> str:
+    load_dotenv(ROOT_DIR / ".env")
+    load_dotenv()
+
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise PlannerError("Thiếu OPENROUTER_API_KEY trong file .env hoặc biến môi trường.")
+
+    model = os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
+    base_url = os.getenv("OPENROUTER_BASE_URL", DEFAULT_BASE_URL)
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": os.getenv("OPENROUTER_HTTP_REFERER", "http://localhost"),
+        "X-Title": os.getenv("OPENROUTER_X_TITLE", "GSM8K-Solution-Verifier"),
+    }
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": build_system_prompt()},
+            {"role": "user", "content": build_user_prompt(problem, entities)},
+        ],
+        "temperature": 0,
+    }
+
+    try:
+        response = requests.post(base_url, headers=headers, json=payload, timeout=90)
+    except requests.RequestException as exc:
+        raise PlannerError(f"Không gọi được OpenRouter: {exc}") from exc
+
+    if response.status_code >= 400:
+        raise PlannerError(f"OpenRouter trả lỗi {response.status_code}: {response.text[:1000]}")
+
+    try:
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        raise PlannerError(f"Response OpenRouter không đúng định dạng: {response.text[:1000]}") from exc
+
+
+def strip_markdown_fence(text: str) -> str:
+    text = text.strip()
+    fenced = re.match(r"^```(?:yaml|yml)?\s*(.*?)\s*```$", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        return fenced.group(1).strip()
+    return text
+
+
+def parse_plan(text: str) -> Dict[str, Any]:
+    clean_text = strip_markdown_fence(text)
+
+    try:
+        parsed = yaml.safe_load(clean_text)
+    except yaml.YAMLError as exc:
+        raise PlannerError(f"LLM trả về YAML không hợp lệ: {exc}") from exc
+
+    if not isinstance(parsed, dict) or not parsed:
+        raise PlannerError("Plan output phải là dictionary không rỗng.")
+
+    return parsed
+
+
+def extract_expr_tokens(expr: str) -> List[str]:
+    """Lấy các token giống tên biến trong expr."""
+    return re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", expr)
+
+
+def target_entity_name(problem_entities: Dict[str, Dict[str, Any]]) -> str:
+    targets = [name for name, entity in problem_entities.items() if entity.get("location") == "target"]
+    if len(targets) != 1:
+        raise PlannerError(f"Phải có đúng 1 target, hiện có {len(targets)}.")
+    return targets[0]
+
+
+def normalize_step_fields(step_name: str, step: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(step, dict):
+        raise PlannerError(f"{step_name} phải là dictionary.")
+
+    # Hỗ trợ alias do prompt trước đó từng dùng nhầm tên.
+    if "grand_result_unit" in step and "result_grand_unit" not in step:
+        step["result_grand_unit"] = step.pop("grand_result_unit")
+
+    required_fields = {"expr", "result", "result_unit", "result_grand_unit"}
+    fields = set(step.keys())
+    missing = required_fields - fields
+    extra = fields - required_fields
+
+    if missing:
+        raise PlannerError(f"{step_name} thiếu trường: {sorted(missing)}")
+    if extra:
+        raise PlannerError(f"{step_name} có trường thừa: {sorted(extra)}")
+
+    expr = step["expr"]
+    result = step["result"]
+
+    if not isinstance(expr, str) or not expr.strip():
+        raise PlannerError(f"{step_name}.expr phải là string không rỗng.")
+    if not isinstance(result, str) or not re.match(r"^[a-z][a-z0-9_]*$", result):
+        raise PlannerError(f"{step_name}.result phải là snake_case hợp lệ.")
+
+    result_unit = normalize_empty(step.get("result_unit"))
+    result_grand_unit = normalize_empty(step.get("result_grand_unit"))
+
+    if result_unit is not None:
+        result_unit = str(result_unit).strip()
+    if result_grand_unit is not None:
+        result_grand_unit = str(result_grand_unit).strip()
+
+    return {
+        "expr": expr.strip(),
+        "result": result.strip(),
+        "result_unit": result_unit,
+        "result_grand_unit": result_grand_unit,
+    }
+
+
+def validate_and_normalize_plan(
+    raw_plan: Dict[str, Any],
+    problem_entities: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    target_name = target_entity_name(problem_entities)
+    available_entities = set(problem_entities.keys())
+    normalized_plan: Dict[str, Dict[str, Any]] = {}
+
+    expected_step_names = [f"step{i}" for i in range(1, len(raw_plan) + 1)]
+    actual_step_names = list(raw_plan.keys())
+
+    if actual_step_names != expected_step_names:
+        raise PlannerError(
+            f"Step phải liên tục theo thứ tự {expected_step_names}, hiện là {actual_step_names}."
+        )
+
+    for step_index, step_name in enumerate(expected_step_names, start=1):
+        step = normalize_step_fields(step_name, raw_plan[step_name])
+
+        expr_tokens = extract_expr_tokens(step["expr"])
+        unknown_tokens = [token for token in expr_tokens if token not in available_entities]
+        if unknown_tokens:
+            raise PlannerError(
+                f"{step_name}.expr dùng entity chưa tồn tại hoặc chưa được tạo: {unknown_tokens}"
             )
 
-        return response.json()["choices"][0]["message"]["content"]
+        result = step["result"]
+        if result in available_entities and result != target_name:
+            raise PlannerError(
+                f"{step_name}.result {result!r} đã tồn tại trong input entity, không nên ghi đè."
+            )
 
-    def parse_json_output(self, raw_output: str) -> Dict[str, Any]:
-        text = raw_output.strip()
+        if step_index < len(expected_step_names) and result == target_name:
+            raise PlannerError("Target chỉ nên được tạo ở bước cuối cùng.")
 
-        if text.startswith("```json"):
-            text = text[len("```json"):].strip()
+        available_entities.add(result)
+        normalized_plan[step_name] = step
 
-        if text.startswith("```"):
-            text = text[len("```"):].strip()
+    last_step = normalized_plan[expected_step_names[-1]]
+    if last_step["result"] != target_name:
+        raise PlannerError(
+            f"Bước cuối phải tạo target {target_name!r}, hiện tạo {last_step['result']!r}."
+        )
 
-        if text.endswith("```"):
-            text = text[:-3].strip()
+    target = problem_entities[target_name]
+    target_unit = normalize_empty(target.get("unit"))
+    target_grand_unit = normalize_empty(target.get("grand_unit"))
 
+    if normalize_empty(last_step.get("result_unit")) != target_unit:
+        raise PlannerError(
+            f"result_unit của bước cuối phải khớp target.unit: {target_unit!r}."
+        )
+
+    if normalize_empty(last_step.get("result_grand_unit")) != target_grand_unit:
+        raise PlannerError(
+            f"result_grand_unit của bước cuối phải khớp target.grand_unit: {target_grand_unit!r}."
+        )
+
+    return normalized_plan
+
+
+def is_number(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, str):
         try:
-            data = json.loads(text)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"LLM did not return valid JSON:\n{text}") from e
+            float(value.replace(",", ""))
+            return True
+        except ValueError:
+            return False
+    return False
 
-        if not isinstance(data, dict):
-            raise ValueError("Plan must be a JSON object")
 
-        return data
+def parse_numeric(value: Any) -> float | int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        return value
+    number = float(str(value).replace(",", ""))
+    if number.is_integer():
+        return int(number)
+    return number
 
-    def validate_plan(self, plan: Dict[str, Any]) -> None:
-        index = 1
 
-        for step_name, step in plan.items():
-            expected_name = f"step{index}"
+def safe_eval_conversion_expr(expr: str, entities: Dict[str, Dict[str, Any]]) -> Optional[float | int]:
+    """
+    Thử tính value cho các bước đổi đơn vị đơn giản.
 
-            if step_name != expected_name:
-                raise ValueError(
-                    f"Invalid step name. Expected {expected_name}, got {step_name}"
-                )
+    Hàm này không bắt buộc mọi step đều tính được value.
+    Nó chỉ tính khi:
+    - expr chỉ gồm số, toán tử đơn giản, ngoặc, và entity đã có value số.
+    - không dùng function/call/import/attribute.
 
-            if not isinstance(step, dict):
-                raise ValueError(f"{step_name} must be a dictionary")
+    Nếu không đủ điều kiện, trả None.
+    """
+    allowed_chars = set("0123456789.+-*/() _abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    if any(ch not in allowed_chars for ch in expr):
+        return None
 
-            for field in ["expr", "result", "result_unit"]:
-                if field not in step:
-                    raise ValueError(f"{step_name} is missing field: {field}")
+    tokens = extract_expr_tokens(expr)
+    local_values: Dict[str, float | int] = {}
 
-                if not isinstance(step[field], str):
-                    raise ValueError(f"{step_name}.{field} must be a string")
+    for token in tokens:
+        entity = entities.get(token)
+        if not entity:
+            return None
+        value = normalize_empty(entity.get("value"))
+        if not is_number(value):
+            return None
+        local_values[token] = parse_numeric(value)
 
-            index += 1
+    try:
+        result = eval(expr, {"__builtins__": {}}, local_values)  # noqa: S307 - sandboxed simple arithmetic
+    except Exception:
+        return None
 
-    def target_entity(self, entities: Dict[str, Any]) -> tuple[str, str]:
-        targets = [
-            (name, fields)
-            for name, fields in entities.items()
-            if isinstance(fields, dict) and fields.get("location") == "target"
-        ]
-        if len(targets) != 1:
-            raise ValueError(f"Expected exactly one target entity, got {len(targets)}")
+    if not is_number(result):
+        return None
 
-        target_name, target_fields = targets[0]
-        target_unit = target_fields.get("unit", "")
-        if not isinstance(target_unit, str):
-            raise ValueError(f"Target unit for {target_name} must be a string")
+    return parse_numeric(result)
 
-        return target_name, target_unit
 
-    def entity_unit(self, name: str, entities: Dict[str, Any], plan: Dict[str, Any]) -> str:
-        if name in entities and isinstance(entities[name], dict):
-            unit = entities[name].get("unit", "")
-            return unit if isinstance(unit, str) else ""
+def looks_like_unit_conversion(step: Dict[str, Any], existing_entities: Dict[str, Dict[str, Any]]) -> bool:
+    """
+    Heuristic để nhận diện bước đổi đơn vị.
 
-        for step in plan.values():
-            if isinstance(step, dict) and step.get("result") == name:
-                unit = step.get("result_unit", "")
-                return unit if isinstance(unit, str) else ""
+    Vì Planner không phải executor chính, hàm này chỉ dùng để thêm value cho biến mới
+    khi step trông giống đổi đơn vị và có thể tính an toàn.
+    """
+    expr = step["expr"]
+    result_unit = normalize_empty(step.get("result_unit"))
+    result_grand_unit = normalize_empty(step.get("result_grand_unit"))
 
-        return ""
+    if result_unit is None:
+        return False
 
-    def normalize_plan_units(self, plan: Dict[str, Any], entities: Dict[str, Any]) -> None:
-        target_name, target_unit = self.target_entity(entities)
+    expr_tokens = extract_expr_tokens(expr)
+    if len(expr_tokens) != 1:
+        return False
 
-        for step in plan.values():
-            if step["result"] == target_name:
-                step["result_unit"] = target_unit
+    source_name = expr_tokens[0]
+    source = existing_entities.get(source_name)
+    if not source:
+        return False
 
-    def validate_plan_against_entities(
-        self,
-        plan: Dict[str, Any],
-        entities: Dict[str, Any],
-    ) -> None:
-        target_name, target_unit = self.target_entity(entities)
-        if not plan:
-            raise ValueError("Plan must have at least one step")
+    source_unit = normalize_empty(source.get("unit"))
+    if source_unit is None:
+        return False
 
-        last_step = next(reversed(plan.values()))
-        if last_step["result"] != target_name:
-            raise ValueError(
-                f"Final step result must be target {target_name}, "
-                f"got {last_step['result']}"
-            )
+    if source_unit == result_unit:
+        return False
 
-        if last_step["result_unit"] != target_unit:
-            raise ValueError(
-                f"Final step unit must be {target_unit}, "
-                f"got {last_step['result_unit']}"
-            )
+    # Nếu grand unit đổi theo cùng target hoặc unit trực tiếp đổi khác nhau, coi là đổi đơn vị.
+    return True or result_grand_unit is not None
 
-    def write_yaml(self, path: Path, data: Dict[str, Any]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(
-                data,
-                f,
-                allow_unicode=True,
-                sort_keys=False,
-                default_flow_style=False
-            )
+def merge_plan_results_into_plan_entities(
+    plan: Dict[str, Dict[str, Any]],
+    problem_entities: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Thêm result của từng step vào PlanEntities.yaml bằng Python.
 
-    def run(self) -> None:
-        problem = self.read_problem()
-        entities = self.read_entities()
+    Quy tắc:
+    - Nếu result chưa có entity: thêm mới.
+    - Nếu result đã có entity target: giữ nguyên location target.
+    - Nếu là bước đổi đơn vị và có thể tính toán an toàn: thêm value cho biến result.
+    - Với step bình thường: value để rỗng/null vì việc thực thi số học nên thuộc module executor/solver khác.
+    """
+    plan_entities: Dict[str, Dict[str, Any]] = {
+        name: {
+            "value": normalize_empty(entity.get("value")),
+            "unit": normalize_empty(entity.get("unit")),
+            "location": entity.get("location"),
+            "grand_unit": normalize_empty(entity.get("grand_unit")),
+        }
+        for name, entity in problem_entities.items()
+    }
 
-        prompt = self.build_prompt(problem, entities)
-        raw_output = self.call_llm(prompt)
+    for step_name, step in plan.items():
+        result = step["result"]
+        result_unit = normalize_empty(step.get("result_unit"))
+        result_grand_unit = normalize_empty(step.get("result_grand_unit"))
 
-        plan = self.parse_json_output(raw_output)
-        self.normalize_plan_units(plan, entities)
-        self.validate_plan(plan)
-        self.validate_plan_against_entities(plan, entities)
+        computed_value: Optional[float | int] = None
+        if looks_like_unit_conversion(step, plan_entities):
+            computed_value = safe_eval_conversion_expr(step["expr"], plan_entities)
 
-        self.write_yaml(PLAN_PATH, plan)
+        if result not in plan_entities:
+            plan_entities[result] = {
+                "value": computed_value,
+                "unit": result_unit,
+                "location": step_name,
+                "grand_unit": result_grand_unit,
+            }
+        else:
+            old_location = plan_entities[result].get("location")
+            plan_entities[result]["unit"] = result_unit
+            if old_location != "target":
+                plan_entities[result]["location"] = step_name
+            plan_entities[result]["grand_unit"] = result_grand_unit
 
-        print(f"Saved plan to {PLAN_PATH}")
+            # Không tự tính target value ở Planner, trừ khi chính nó là bước đổi đơn vị đơn giản.
+            if computed_value is not None:
+                plan_entities[result]["value"] = computed_value
+            else:
+                plan_entities[result]["value"] = normalize_empty(plan_entities[result].get("value"))
+
+    return plan_entities
+
+
+def run() -> None:
+    try:
+        ensure_dirs()
+        problem = read_problem()
+        raw_problem_entities = read_yaml_file(PROBLEM_ENTITIES_PATH, required=True)
+        problem_entities = validate_problem_entities(raw_problem_entities)
+
+        raw_response = call_openrouter(problem, problem_entities)
+        raw_plan = parse_plan(raw_response)
+        plan = validate_and_normalize_plan(raw_plan, problem_entities)
+
+        write_yaml_file(PLAN_PATH, plan)
+
+        plan_entities = merge_plan_results_into_plan_entities(plan, problem_entities)
+        write_yaml_file(PLAN_ENTITIES_PATH, plan_entities)
+
+        write_log("Pass Planner")
+        print("Pass Planner")
+    except Exception as exc:
+        write_log("Fail Planner", str(exc))
+        print("Fail Planner")
+        print(f"Reason: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":
-    planner = Planner()
-    planner.run()
+    run()

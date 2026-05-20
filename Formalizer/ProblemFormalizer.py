@@ -1,405 +1,583 @@
+"""
+Formalizer/ProblemFomalizer.py
+
+Nhiệm vụ:
+- Đọc đề bài từ Input/Problem.txt
+- Gọi LLM qua OpenRouter để trích xuất các thực thể có giá trị số được nêu trực tiếp trong đề bài
+- Không tính toán các thực thể trung gian chưa có số trực tiếp trong đề
+- Tạo thêm đúng 1 thực thể target cần tìm, value rỗng
+- Ghi kết quả vào Output/ProblemEntities.yaml
+- Nếu thành công/thất bại, ghi trạng thái vào Output/Log.yaml
+- Nếu thành công, copy Output/ProblemEntities.yaml sang:
+  - Output/PlanEntities.yaml
+  - Output/StudentAnswerEntities.yaml
+
+Yêu cầu .env:
+OPENROUTER_API_KEY=...
+OPENROUTER_MODEL=google/gemini-2.0-flash-001  # optional
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1/chat/completions  # optional
+"""
+
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
-from dataclasses import dataclass
+import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Optional
 
 import requests
 import yaml
 from dotenv import load_dotenv
 
 
-@dataclass(frozen=True)
-class FormalizerConfig:
-    input_path: Path = Path("Input/Problem.txt")
-    output_path: Path = Path("Output/ProblemEntities.yaml")
-    plan_path: Path = Path("Output/PlanEntities.yaml")
-    model: str = "openai/gpt-4o-mini"
-    timeout_seconds: int = 60
-    max_tokens: int = 1200
-    max_retries: int = 2
+ROOT_DIR = Path(__file__).resolve().parents[1]
+INPUT_PATH = ROOT_DIR / "Input" / "Problem.txt"
+OUTPUT_DIR = ROOT_DIR / "Output"
+PROBLEM_ENTITIES_PATH = OUTPUT_DIR / "ProblemEntities.yaml"
+PLAN_ENTITIES_PATH = OUTPUT_DIR / "PlanEntities.yaml"
+STUDENT_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "StudentAnswerEntities.yaml"
+LOG_PATH = OUTPUT_DIR / "Log.yaml"
+
+DEFAULT_MODEL = "google/gemini-2.0-flash-001"
+DEFAULT_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+NUMBER_TOLERANCE = 1e-9
+
+NUMBER_WORDS = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+}
+
+SCALE_WORDS = {
+    "hundred": 100,
+    "thousand": 1000,
+}
+
+FRACTION_DENOMINATORS = {
+    "half": 2,
+    "halves": 2,
+    "third": 3,
+    "thirds": 3,
+    "fourth": 4,
+    "fourths": 4,
+    "quarter": 4,
+    "quarters": 4,
+    "fifth": 5,
+    "fifths": 5,
+    "sixth": 6,
+    "sixths": 6,
+    "seventh": 7,
+    "sevenths": 7,
+    "eighth": 8,
+    "eighths": 8,
+    "ninth": 9,
+    "ninths": 9,
+    "tenth": 10,
+    "tenths": 10,
+}
 
 
-class ProblemFormalizer:
-    def __init__(self, config: FormalizerConfig | None = None) -> None:
-        load_dotenv()
-        self.config = config or FormalizerConfig()
-        self.api_key = os.getenv("OPENROUTER_API_KEY")
-        self.model = os.getenv("OPENROUTER_MODEL", self.config.model)
+class ProblemFormalizerError(Exception):
+    """Lỗi riêng cho ProblemFormalizer."""
 
-        if not self.api_key:
-            raise EnvironmentError("Missing OPENROUTER_API_KEY in .env.")
 
-    def read_problem(self) -> str:
-        if not self.config.input_path.exists():
-            raise FileNotFoundError(f"Cannot find input file: {self.config.input_path}")
+def ensure_dirs() -> None:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-        problem = self.config.input_path.read_text(encoding="utf-8").strip()
-        if not problem:
-            raise ValueError(f"Input file is empty: {self.config.input_path}")
 
-        return problem
+def write_log(status: str, message: str = "") -> None:
+    ensure_dirs()
+    payload = {
+        "ProblemFormalizer": status,
+    }
+    if message:
+        payload["message"] = message
 
-    def build_prompt(self, problem: str, previous_error: str | None = None) -> str:
-        retry_note = ""
-        if previous_error:
-            retry_note = f"""
+    with LOG_PATH.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(payload, f, allow_unicode=True, sort_keys=False)
 
-Your previous output was rejected for this reason:
-{previous_error}
 
-Return a corrected YAML now. Remove all computed/intermediate entities.
-""".rstrip()
+def read_problem() -> str:
+    if not INPUT_PATH.exists():
+        raise ProblemFormalizerError(f"Không tìm thấy file: {INPUT_PATH}")
 
-        return f"""
-You are a strict Problem Formalizer for grade-school math word problems.
+    text = INPUT_PATH.read_text(encoding="utf-8").strip()
+    if not text:
+        raise ProblemFormalizerError("Input/Problem.txt đang rỗng.")
 
-Task:
-Extract ONLY entities whose numeric values are explicitly stated in the problem,
-plus exactly one target entity for the answer being asked.
+    return text
 
-Output format:
-- Return ONLY valid YAML.
-- Do not use markdown fences.
-- Do not explain.
-- The top-level YAML object maps snake_case entity names to exactly 3 fields:
-  value, unit, location.
 
-Allowed fields:
-  value:
-    - numeric value for explicit inputs.
-    - empty string "" for the target.
-    - convert number words to numbers, e.g. "six" -> 6.
-    - convert fractions/percentages/scalars to numbers, e.g. 1/4 -> 0.25,
-      10% -> 0.10, seven times -> 7.
-  unit:
-    - original unit category, e.g. dollars, days, tabs, coffees, inches.
-    - use "" for pure scalars/fractions/multipliers.
-  location:
-    - "input" for explicit values from the problem.
-    - "target" for the final asked quantity.
+def build_system_prompt() -> str:
+    return """
+Bạn là một bộ formalize đề toán thành YAML.
 
-Strict rules:
-- Do NOT solve the problem.
-- Do NOT compute intermediate values.
-- Do NOT include values that require arithmetic.
-- Do NOT create variables like after_first, remaining_after_second,
-  tabs_closed_first, total_cost_per_day, total_spent, etc.
-- For phrases like "closed 1/4 of the remaining tabs", include only the explicit
-  fraction 0.25 as an input scalar. Do not compute how many tabs were closed.
-- For phrases like "closed half of the remaining tabs", include only the explicit
-  fraction 0.5 as an input scalar.
-- Fractions, percentages, ratios, and multipliers written in the problem are
-  allowed as scalar input entities.
-- The target entity must have value: "".
-- There must be exactly one target entity.
-- The target must represent the exact quantity asked in the final question.
-- If the question asks "how many ... end up with", "how many ... remain", or
-  "how many ... left", the target is the final remaining quantity, not a
-  purchased/received/spent/intermediate quantity.
+Nhiệm vụ của bạn:
+1. Chỉ trích xuất các thực thể có giá trị số được nói trực tiếp trong đề bài.
+2. Nếu số được viết bằng chữ, hãy chuyển thành số. Ví dụ: "two" -> 2, "twenty" -> 20, "half" -> 0.5.
+3. Không tính toán bất kỳ đại lượng nào không được cho trực tiếp trong đề bài.
+4. Không tạo thực thể trung gian phải suy ra bằng phép tính.
+5. Luôn tạo thêm đúng một thực thể là đáp số cần tìm, có location là target và value rỗng.
+6. Các thực thể trong đề bài trực tiếp có location là input.
+7. Trong file này, location chỉ được là input hoặc target.
+8. Phân số, phần trăm, tỉ lệ, hệ số nhân được nói trực tiếp trong đề cũng là input scalar.
+   Ví dụ: "a third" -> value 0.3333333333333333, unit rỗng; "a fourth" -> 0.25; "seven times" -> 7.
 
-Example problem:
-Nancy buys 2 coffees a day. She grabs a double espresso for $3.00 every morning.
-In the afternoon, she grabs an iced coffee for $2.50. After 20 days, how much
-money has she spent on coffee?
+Mỗi thực thể phải có đúng 4 trường:
+- value: giá trị số được cho trực tiếp trong đề bài. Với target, để rỗng bằng null.
+- unit: đơn vị trực tiếp của thực thể, viết bằng tiếng Anh dạng số nhiều nếu phù hợp. Ví dụ: dollars, days, books, pens. Với scalar như phần trăm, phân số, nhân tử, có thể để rỗng.
+- location: input hoặc target.
+- grand_unit: đơn vị đối chiếu theo target.
 
-Example output:
-coffees_per_day:
-  value: 2
-  unit: coffees
-  location: input
+Quy tắc grand_unit:
+- Nếu thực thể có cùng loại đơn vị với target hoặc là thành phần có thể cộng/tổng hợp vào target, grand_unit là unit của target.
+  Ví dụ target là tổng items, sách có unit books và bút có unit pens thì grand_unit của sách/bút là items.
+- Nếu thực thể không liên quan trực tiếp đến đơn vị target, giữ grand_unit là unit của chính nó hoặc để rỗng nếu là scalar.
+  Ví dụ target là tổng pens, books không liên quan thì grand_unit của books là books.
+- Với scalar như phần trăm, phân số, hệ số nhân, grand_unit có thể để rỗng.
+- Với target, grand_unit thường bằng unit của target.
+
+Quy tắc loại bỏ:
+- Không đưa vào các số chỉ là nhãn, tên riêng, số thứ tự không tham gia bài toán.
+- Không đưa vào đại lượng được suy ra. Ví dụ đề nói có 2 cà phê mỗi ngày gồm cà phê sáng $3 và cà phê chiều $2.50, không tự tính chi phí/ngày.
+- Không đưa vào kết quả của phép tính dù phép tính rất đơn giản. Ví dụ đề nói "7 tokens" và "seven times as many" thì giữ scalar 7, không tạo entity giá trị 49.
+- Nếu một số trực tiếp trong đề bị thừa và không liên quan đến lời hỏi, có thể vẫn giữ nếu nó là dữ kiện số trong đề; nhưng không được tự tính thêm.
+
+Tên biến:
+- Dùng snake_case.
+- Tên phải rõ nghĩa theo vai trò trong đề bài.
+- Target nên đặt theo đại lượng cần tìm, ví dụ total_cost, remaining_tabs, total_items.
+
+Định dạng output bắt buộc:
+- Chỉ trả về YAML thuần.
+- Không dùng Markdown.
+- Không bọc trong ```.
+- Không giải thích.
+- Không thêm trường ngoài 4 trường đã yêu cầu.
+
+Ví dụ:
 morning_coffee_price:
   value: 3.00
   unit: dollars
   location: input
+  grand_unit: dollars
+
 afternoon_coffee_price:
   value: 2.50
   unit: dollars
   location: input
+  grand_unit: dollars
+
 days:
   value: 20
   unit: days
   location: input
+  grand_unit:
+
+fraction_wasted_pac_man:
+  value: 0.3333333333333333
+  unit:
+  location: input
+  grand_unit:
+
+parent_token_multiplier:
+  value: 7
+  unit:
+  location: input
+  grand_unit:
+
 total_cost:
-  value: ""
+  value:
   unit: dollars
   location: target
-
-Problem:
-{problem}
-{retry_note}
+  grand_unit: dollars
 """.strip()
 
-    def call_openrouter(self, prompt: str) -> str:
-        response = requests.post(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "http://localhost",
-                "X-Title": "Problem Formalizer",
-            },
-            json={
-                "model": self.model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You extract explicit math problem entities into "
-                            "strict YAML. Never solve the problem."
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.0,
-                "max_tokens": self.config.max_tokens,
-            },
-            timeout=self.config.timeout_seconds,
+
+def build_user_prompt(problem: str) -> str:
+    return f"""
+Hãy formalize đề bài sau thành YAML theo đúng quy tắc.
+
+Đề bài:
+{problem}
+""".strip()
+
+
+def call_openrouter(problem: str) -> str:
+    load_dotenv(ROOT_DIR / ".env")
+    load_dotenv()
+
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise ProblemFormalizerError("Thiếu OPENROUTER_API_KEY trong file .env hoặc biến môi trường.")
+
+    model = os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
+    base_url = os.getenv("OPENROUTER_BASE_URL", DEFAULT_BASE_URL)
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": os.getenv("OPENROUTER_HTTP_REFERER", "http://localhost"),
+        "X-Title": os.getenv("OPENROUTER_X_TITLE", "GSM8K-Solution-Verifier"),
+    }
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": build_system_prompt()},
+            {"role": "user", "content": build_user_prompt(problem)},
+        ],
+        "temperature": 0,
+    }
+
+    try:
+        response = requests.post(base_url, headers=headers, json=payload, timeout=90)
+    except requests.RequestException as exc:
+        raise ProblemFormalizerError(f"Không gọi được OpenRouter: {exc}") from exc
+
+    if response.status_code >= 400:
+        raise ProblemFormalizerError(
+            f"OpenRouter trả lỗi {response.status_code}: {response.text[:1000]}"
         )
-        response.raise_for_status()
 
+    try:
         data = response.json()
+        return data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        raise ProblemFormalizerError(f"Response OpenRouter không đúng định dạng: {response.text[:1000]}") from exc
+
+
+def strip_markdown_fence(text: str) -> str:
+    text = text.strip()
+
+    fenced = re.match(r"^```(?:yaml|yml)?\s*(.*?)\s*```$", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        return fenced.group(1).strip()
+
+    return text
+
+
+def parse_yaml(text: str) -> Dict[str, Any]:
+    clean_text = strip_markdown_fence(text)
+
+    try:
+        parsed = yaml.safe_load(clean_text)
+    except yaml.YAMLError as exc:
+        raise ProblemFormalizerError(f"LLM trả về YAML không hợp lệ: {exc}") from exc
+
+    if not isinstance(parsed, dict) or not parsed:
+        raise ProblemFormalizerError("YAML output phải là dictionary không rỗng.")
+
+    return parsed
+
+
+def normalize_empty(value: Any) -> Any:
+    if value == "" or value == "null" or value == "None":
+        return None
+    return value
+
+
+def coerce_number(value: Any, entity_name: str) -> Optional[float | int]:
+    value = normalize_empty(value)
+
+    if value is None:
+        return None
+
+    if isinstance(value, bool):
+        raise ProblemFormalizerError(f"{entity_name}.value không được là boolean.")
+
+    if isinstance(value, int):
+        return value
+
+    if isinstance(value, float):
+        return value
+
+    if isinstance(value, str):
+        cleaned = value.strip().replace(",", "")
+        if not cleaned:
+            return None
         try:
-            content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError) as exc:
-            raise ValueError(f"Unexpected OpenRouter response: {data}") from exc
+            number = float(cleaned)
+        except ValueError as exc:
+            raise ProblemFormalizerError(f"{entity_name}.value phải là số, hiện là: {value!r}") from exc
 
-        if not isinstance(content, str) or not content.strip():
-            raise ValueError(f"OpenRouter returned empty content: {data}")
+        if number.is_integer():
+            return int(number)
+        return number
 
-        return content
+    raise ProblemFormalizerError(f"{entity_name}.value phải là số hoặc rỗng cho target.")
 
-    def clean_yaml_text(self, text: str) -> str:
-        text = text.strip()
-        if text.startswith("```"):
-            text = re.sub(r"^```(?:yaml|yml)?", "", text).strip()
-            text = re.sub(r"```$", "", text).strip()
-        return text
 
-    def parse_entities(
-        self,
-        raw_output: str,
-        problem: str,
-    ) -> dict[str, dict[str, Any]]:
-        yaml_text = self.clean_yaml_text(raw_output)
-        parsed = yaml.safe_load(yaml_text)
-        self.normalize_target(parsed, problem)
-        self.validate_entities(parsed, problem)
-        return parsed
+def parse_number_word_phrase(text: str) -> Optional[int]:
+    tokens = re.split(r"[\s-]+", text.strip().lower())
+    total = 0
+    current = 0
+    found = False
 
-    def normalize_target(self, entities: Any, problem: str) -> None:
-        if not isinstance(entities, dict):
-            return
+    for token in tokens:
+        if token in NUMBER_WORDS:
+            current += NUMBER_WORDS[token]
+            found = True
+            continue
 
-        inferred_target = self.infer_target_from_question(problem)
-        if not inferred_target:
-            return
-
-        target_name, target_unit = inferred_target
-        existing_targets = [
-            name
-            for name, fields in entities.items()
-            if isinstance(fields, dict) and fields.get("location") == "target"
-        ]
-
-        for name in existing_targets:
-            if name != target_name and name in entities:
-                del entities[name]
-
-        entities[target_name] = {
-            "value": "",
-            "unit": target_unit,
-            "location": "target",
-        }
-
-    def infer_target_from_question(self, problem: str) -> tuple[str, str] | None:
-        question = self.extract_question(problem)
-        normalized_question = question.lower()
-
-        if "end up with" in normalized_question and "token" in normalized_question:
-            return ("tokens_remaining", "tokens")
-
-        if (
-            any(phrase in normalized_question for phrase in ("remain", "remaining", "left"))
-            and "token" in normalized_question
-        ):
-            return ("tokens_remaining", "tokens")
+        if token in SCALE_WORDS:
+            scale = SCALE_WORDS[token]
+            current = max(current, 1) * scale
+            if scale >= 1000:
+                total += current
+                current = 0
+            found = True
+            continue
 
         return None
 
-    def extract_question(self, problem: str) -> str:
-        parts = [part.strip() for part in problem.split("?") if part.strip()]
-        if not parts:
-            return problem.strip()
+    if not found:
+        return None
 
-        return parts[-1]
+    return total + current
 
-    def validate_entities(self, entities: Any, problem: str) -> None:
-        if not isinstance(entities, dict):
-            raise ValueError("Output YAML must be a dictionary.")
 
-        target_count = 0
-        required_fields = {"value", "unit", "location"}
+def spans_overlap(left: tuple[int, int], right: tuple[int, int]) -> bool:
+    return left[0] < right[1] and right[0] < left[1]
 
-        target_name = ""
 
-        for name, fields in entities.items():
-            if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", name):
-                raise ValueError(f"Invalid entity name: {name!r}")
+def span_is_covered(span: tuple[int, int], spans: list[tuple[int, int]]) -> bool:
+    return any(spans_overlap(span, existing) for existing in spans)
 
-            if not isinstance(fields, dict):
-                raise ValueError(f"Entity {name!r} must be a dictionary.")
 
-            if set(fields.keys()) != required_fields:
-                raise ValueError(
-                    f"Entity {name!r} must have exactly fields: "
-                    "value, unit, location."
-                )
+def extract_direct_numeric_values(problem: str) -> list[float]:
+    text = problem.lower()
+    values: list[float] = []
+    covered_spans: list[tuple[int, int]] = []
 
-            location = fields["location"]
-            value = fields["value"]
-            unit = fields["unit"]
+    for match in re.finditer(r"\b(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)\b", text):
+        numerator = float(match.group(1))
+        denominator = float(match.group(2))
+        if denominator == 0:
+            continue
+        values.append(numerator / denominator)
+        covered_spans.append(match.span())
 
-            if location not in {"input", "target"}:
-                raise ValueError(
-                    f"location of {name!r} must be either 'input' or 'target'."
-                )
+    fraction_pattern = re.compile(
+        r"\b(?:(a|an)|((?:zero|one|two|three|four|five|six|seven|eight|nine|ten|"
+        r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
+        r"nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)"
+        r"(?:[\s-]+(?:one|two|three|four|five|six|seven|eight|nine))?))\s+"
+        r"(half|halves|thirds?|fourths?|quarters?|fifths?|sixths?|sevenths?|"
+        r"eighths?|ninths?|tenths?)\b"
+    )
+    for match in fraction_pattern.finditer(text):
+        if span_is_covered(match.span(), covered_spans):
+            continue
 
-            if not isinstance(unit, str):
-                raise ValueError(f"unit of {name!r} must be a string.")
+        numerator = 1 if match.group(1) else parse_number_word_phrase(match.group(2) or "")
+        denominator = FRACTION_DENOMINATORS[match.group(3)]
+        if numerator is None:
+            continue
 
-            if location == "target":
-                target_count += 1
-                target_name = name
-                if value not in ("", None):
-                    raise ValueError(f"Target entity {name!r} must have empty value.")
-            else:
-                if self.looks_computed_name(name):
-                    raise ValueError(
-                        f"Input entity {name!r} looks computed. ProblemFormalizer "
-                        "must only extract explicit inputs and target."
-                    )
+        values.append(numerator / denominator)
+        covered_spans.append(match.span())
 
-                if not isinstance(value, (int, float)):
-                    raise ValueError(f"value of input entity {name!r} must be numeric.")
+    for match in re.finditer(r"\b(\d+(?:,\d{3})*(?:\.\d+)?)\s*%", text):
+        if span_is_covered(match.span(), covered_spans):
+            continue
+        values.append(float(match.group(1).replace(",", "")) / 100)
+        covered_spans.append(match.span())
 
-        if target_count != 1:
-            raise ValueError(f"Expected exactly one target entity, got {target_count}.")
+    for match in re.finditer(r"(?<![\w/])\d+(?:,\d{3})*(?:\.\d+)?(?!\s*/|\w|%)", text):
+        if span_is_covered(match.span(), covered_spans):
+            continue
+        raw_value = match.group(0).replace(",", "")
+        values.append(float(raw_value))
+        covered_spans.append(match.span())
 
-        self.validate_target_matches_question(target_name, problem)
+    number_word_pattern = re.compile(
+        r"\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|"
+        r"twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+        r"twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)"
+        r"(?:[\s-]+(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|"
+        r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
+        r"nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
+        r"hundred|thousand))*\b"
+    )
+    for match in number_word_pattern.finditer(text):
+        if span_is_covered(match.span(), covered_spans):
+            continue
+        value = parse_number_word_phrase(match.group(0))
+        if value is None:
+            continue
+        values.append(float(value))
+        covered_spans.append(match.span())
 
-    def validate_target_matches_question(self, target_name: str, problem: str) -> None:
-        normalized_problem = problem.lower()
-        final_quantity_phrases = (
-            "end up with",
-            "ended up with",
-            "remain",
-            "remaining",
-            "left",
-            "have left",
+    return values
+
+
+def numbers_equal(left: float | int, right: float | int) -> bool:
+    return abs(float(left) - float(right)) <= NUMBER_TOLERANCE
+
+
+def format_number_for_error(value: float | int) -> str:
+    number = float(value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:.12g}"
+
+
+def validate_values_are_direct(problem: str, entities: Dict[str, Dict[str, Any]]) -> None:
+    expected_values = extract_direct_numeric_values(problem)
+    unused_expected = expected_values.copy()
+
+    for entity_name, entity in entities.items():
+        if entity["location"] != "input":
+            continue
+
+        value = entity["value"]
+        match_index = next(
+            (
+                index
+                for index, expected_value in enumerate(unused_expected)
+                if numbers_equal(value, expected_value)
+            ),
+            None,
         )
-        misleading_target_markers = (
-            "received",
-            "bought",
-            "purchased",
-            "spent",
-            "wasted",
-            "used",
-            "lost",
-        )
-        final_target_markers = (
-            "final",
-            "remaining",
-            "left",
-            "end",
-            "ending",
-            "result",
+        if match_index is None:
+            raise ProblemFormalizerError(
+                f"{entity_name}.value={format_number_for_error(value)} không phải số được nêu trực tiếp trong đề."
+            )
+        del unused_expected[match_index]
+
+    if unused_expected:
+        missing = ", ".join(format_number_for_error(value) for value in unused_expected)
+        raise ProblemFormalizerError(
+            f"Thiếu thực thể input cho các số/scalar trực tiếp trong đề: {missing}."
         )
 
-        asks_for_final_quantity = any(
-            phrase in normalized_problem for phrase in final_quantity_phrases
-        )
-        if not asks_for_final_quantity:
-            return
 
-        if any(marker in target_name for marker in misleading_target_markers):
-            raise ValueError(
-                f"Target {target_name!r} is an intermediate action quantity, but the "
-                "question asks for the final/remaining quantity."
+def validate_and_normalize(entities: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    required_fields = {"value", "unit", "location", "grand_unit"}
+    normalized: Dict[str, Dict[str, Any]] = {}
+    target_count = 0
+
+    for entity_name, entity in entities.items():
+        if not isinstance(entity_name, str) or not entity_name.strip():
+            raise ProblemFormalizerError("Tên entity phải là string không rỗng.")
+
+        if not re.match(r"^[a-z][a-z0-9_]*$", entity_name):
+            raise ProblemFormalizerError(
+                f"Tên entity phải là snake_case hợp lệ, hiện là: {entity_name!r}"
             )
 
-        if not any(marker in target_name for marker in final_target_markers):
-            raise ValueError(
-                f"Target {target_name!r} does not look like a final/remaining "
-                "quantity requested by the question."
+        if not isinstance(entity, dict):
+            raise ProblemFormalizerError(f"Entity {entity_name} phải là dictionary.")
+
+        fields = set(entity.keys())
+        missing = required_fields - fields
+        extra = fields - required_fields
+        if missing:
+            raise ProblemFormalizerError(f"Entity {entity_name} thiếu trường: {sorted(missing)}")
+        if extra:
+            raise ProblemFormalizerError(f"Entity {entity_name} có trường thừa: {sorted(extra)}")
+
+        location = str(entity["location"]).strip()
+        if location not in {"input", "target"}:
+            raise ProblemFormalizerError(
+                f"{entity_name}.location chỉ được là input hoặc target, hiện là: {location!r}"
             )
 
-    def looks_computed_name(self, name: str) -> bool:
-        computed_markers = (
-            "after_",
-            "remaining_after",
-            "total_",
-            "_total",
-            "spent_total",
-            "closed_first",
-            "closed_second",
-            "closed_third",
-            "after_first",
-            "after_second",
-            "after_third",
+        value = coerce_number(entity["value"], entity_name)
+
+        if location == "input" and value is None:
+            raise ProblemFormalizerError(f"{entity_name} có location input thì value bắt buộc là số.")
+
+        if location == "target":
+            target_count += 1
+            if value is not None:
+                raise ProblemFormalizerError(f"{entity_name} là target nên value phải rỗng/null.")
+
+        unit = normalize_empty(entity["unit"])
+        grand_unit = normalize_empty(entity["grand_unit"])
+
+        if unit is not None:
+            unit = str(unit).strip()
+        if grand_unit is not None:
+            grand_unit = str(grand_unit).strip()
+
+        normalized[entity_name] = {
+            "value": value,
+            "unit": unit,
+            "location": location,
+            "grand_unit": grand_unit,
+        }
+
+    if target_count != 1:
+        raise ProblemFormalizerError(f"Phải có đúng 1 entity target, hiện có {target_count}.")
+
+    return normalized
+
+
+def dump_entities(entities: Dict[str, Dict[str, Any]]) -> None:
+    ensure_dirs()
+    with PROBLEM_ENTITIES_PATH.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(
+            entities,
+            f,
+            allow_unicode=True,
+            sort_keys=False,
+            default_flow_style=False,
         )
-        return any(marker in name for marker in computed_markers)
-
-    def save_yaml(self, entities: dict[str, dict[str, Any]]) -> None:
-        self.config.output_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.config.output_path.open("w", encoding="utf-8") as file:
-            yaml.safe_dump(
-                entities,
-                file,
-                allow_unicode=True,
-                sort_keys=False,
-                default_flow_style=False,
-            )
-
-    def copy_to_plan_entities(self) -> None:
-        self.config.plan_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(self.config.output_path, self.config.plan_path)
-
-    def run(self) -> dict[str, dict[str, Any]]:
-        problem = self.read_problem()
-        previous_error: str | None = None
-        last_raw_output = ""
-
-        for attempt in range(1, self.config.max_retries + 1):
-            prompt = self.build_prompt(problem, previous_error)
-            raw_output = self.call_openrouter(prompt)
-            last_raw_output = raw_output
-
-            try:
-                entities = self.parse_entities(raw_output, problem)
-                break
-            except ValueError as exc:
-                previous_error = str(exc)
-                if attempt == self.config.max_retries:
-                    raise ValueError(
-                        f"Could not produce valid problem entities after "
-                        f"{attempt} attempts. Last raw output:\n{last_raw_output}"
-                    ) from exc
-
-        self.save_yaml(entities)
-        self.copy_to_plan_entities()
-        return entities
 
 
-def main() -> None:
-    formalizer = ProblemFormalizer()
-    formalizer.run()
-    print(f"Saved problem entities to: {formalizer.config.output_path}")
-    print(f"Copied problem entities to: {formalizer.config.plan_path}")
+def copy_entities_to_downstream_files() -> None:
+    shutil.copyfile(PROBLEM_ENTITIES_PATH, PLAN_ENTITIES_PATH)
+    shutil.copyfile(PROBLEM_ENTITIES_PATH, STUDENT_ANSWER_ENTITIES_PATH)
+
+
+def run() -> None:
+    try:
+        ensure_dirs()
+        problem = read_problem()
+        raw_response = call_openrouter(problem)
+        parsed_entities = parse_yaml(raw_response)
+        entities = validate_and_normalize(parsed_entities)
+        validate_values_are_direct(problem, entities)
+        dump_entities(entities)
+        copy_entities_to_downstream_files()
+        write_log("Pass ProblemFormalizer")
+        print("Pass ProblemFormalizer")
+    except Exception as exc:
+        write_log("Fail ProblemFormalizer", str(exc))
+        print("Fail ProblemFormalizer")
+        print(f"Reason: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":
-    main()
+    run()
