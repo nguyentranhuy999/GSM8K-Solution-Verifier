@@ -565,21 +565,26 @@ def check_misreading_and_logic_error(plan: Dict[str, Any], entities: Dict[str, D
         except Exception:
             continue
 
-        tokens = expr_tokens(expr)
         expected_values: List[Decimal] = []
-        token_names: List[str] = []
+        token_names: List[Optional[str]] = []
 
-        for token in tokens:
-            if token not in entities:
-                continue
-            value = normalize_empty(entities[token].get("value"))
-            if value is None:
-                continue
-            try:
-                expected_values.append(to_decimal(value, context=f"{token}.value"))
-                token_names.append(token)
-            except Exception:
-                continue
+        expr_items = re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b|-?\d+(?:\.\d+)?", str(expr))
+        for item in expr_items:
+            if item in entities:
+                value = normalize_empty(entities[item].get("value"))
+                if value is None:
+                    continue
+                try:
+                    expected_values.append(to_decimal(value, context=f"{item}.value"))
+                    token_names.append(item)
+                except Exception:
+                    continue
+            else:
+                try:
+                    expected_values.append(Decimal(item))
+                    token_names.append(None)
+                except InvalidOperation:
+                    continue
 
         reported_numbers = parse_numbers_from_text(lhs)
         mismatches = numbers_match_sequence(expected_values, reported_numbers)
@@ -588,6 +593,8 @@ def check_misreading_and_logic_error(plan: Dict[str, Any], entities: Dict[str, D
             if idx >= len(token_names):
                 continue
             token = token_names[idx]
+            if token is None:
+                continue
             token_location = entities[token].get("location")
             if token_location == "input":
                 add_error(errors, "misreading", step=sname, entity=token)

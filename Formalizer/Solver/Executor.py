@@ -600,6 +600,8 @@ Quy tắc quan trọng:
 - Expr chỉ dùng entity đã có trong PlanEntities hoặc result từ step trước.
 - Bước cuối phải tạo ra target nếu target đang tồn tại trong PlanEntities.
 - Không tự thêm dữ kiện input mới không có trong đề.
+- Không sửa value/unit/location/grand_unit của bất kỳ entity nào đến từ ProblemEntities.yaml.
+  Các input entity và target schema là bất biến; chỉ được sửa step/result trung gian và Plan.yaml.
 - Có thể sửa result_unit/result_grand_unit nếu sai.
 - Nếu đổi tên result trong Plan.yaml thì phải đồng bộ PlanEntities.yaml.
 - Với input entity, expr và formalized_expr phải là null.
@@ -710,15 +712,10 @@ def load_and_execute_current_files() -> None:
     raw_entities = read_yaml_file(PLAN_ENTITIES_PATH, required=True)
     raw_problem_entities = read_yaml_file(PROBLEM_ENTITIES_PATH, required=False)
 
-    target_entities = [
-        (name, fields)
-        for name, fields in raw_problem_entities.items()
-        if isinstance(fields, dict) and fields.get("location") == "target"
-    ]
-    if len(target_entities) == 1:
-        target_name, target_fields = target_entities[0]
-        raw_entities.setdefault(target_name, dict(target_fields))
-        raw_entities[target_name]["location"] = "target"
+    for name, fields in raw_problem_entities.items():
+        if not isinstance(fields, dict):
+            continue
+        raw_entities[name] = dict(fields)
 
     plan = validate_and_normalize_plan(raw_plan)
     entities = validate_and_normalize_entities(raw_entities)

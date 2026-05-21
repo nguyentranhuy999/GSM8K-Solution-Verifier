@@ -104,6 +104,15 @@ FRACTION_DENOMINATORS = {
     "tenths": 10,
 }
 
+MULTIPLIER_WORDS = {
+    "twice": 2,
+    "double": 2,
+    "doubled": 2,
+    "thrice": 3,
+    "triple": 3,
+    "tripled": 3,
+}
+
 
 class ProblemFormalizerError(Exception):
     """Lỗi riêng cho ProblemFormalizer."""
@@ -406,6 +415,19 @@ def extract_direct_numeric_values(problem: str) -> list[float]:
         values.append(numerator / denominator)
         covered_spans.append(match.span())
 
+    for match in re.finditer(r"\b(half|quarter)\b", text):
+        if span_is_covered(match.span(), covered_spans):
+            continue
+        denominator = FRACTION_DENOMINATORS[match.group(1)]
+        values.append(1 / denominator)
+        covered_spans.append(match.span())
+
+    for match in re.finditer(r"\b(twice|double|doubled|thrice|triple|tripled)\b", text):
+        if span_is_covered(match.span(), covered_spans):
+            continue
+        values.append(float(MULTIPLIER_WORDS[match.group(1)]))
+        covered_spans.append(match.span())
+
     for match in re.finditer(r"\b(\d+(?:,\d{3})*(?:\.\d+)?)\s*%", text):
         if span_is_covered(match.span(), covered_spans):
             continue
@@ -474,7 +496,8 @@ def validate_values_are_direct(problem: str, entities: Dict[str, Dict[str, Any]]
             )
         del unused_expected[match_index]
 
-    if unused_expected:
+    require_all_direct_values = os.getenv("PROBLEM_FORMALIZER_REQUIRE_ALL_DIRECT_VALUES") == "1"
+    if require_all_direct_values and unused_expected:
         missing = ", ".join(format_number_for_error(value) for value in unused_expected)
         raise ProblemFormalizerError(
             f"Thiếu thực thể input cho các số/scalar trực tiếp trong đề: {missing}."

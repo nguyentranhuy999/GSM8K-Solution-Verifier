@@ -1,82 +1,25 @@
-initial_tokens:
-  value: 36
-  unit: tokens
+hundred_years:
+  value: 100
+  unit: years
   location: input
-  grand_unit: tokens
-  expr: null
-  formalized_expr: null
-  map: initial_tokens
-fraction_wasted_pac_man:
-  value: 0.3333333333333333
+  grand_unit: null
+three_hundred_years:
+  value: 300
+  unit: years
+  location: input
+  grand_unit: null
+consumed_people:
+  value: 847
+  unit: people
+  location: input
+  grand_unit: null
+ship_multiplier:
+  value: 2
   unit: null
   location: input
   grand_unit: null
-  expr: null
-  formalized_expr: null
-  map: fraction_wasted_pac_man
-fraction_wasted_candy_crush:
-  value: 0.25
-  unit: null
-  location: input
-  grand_unit: null
-  expr: null
-  formalized_expr: null
-  map: fraction_wasted_candy_crush
-tokens_wasted_ski_ball:
-  value: 7
-  unit: tokens
-  location: input
-  grand_unit: tokens
-  expr: null
-  formalized_expr: null
-  map: tokens_wasted_ski_ball
-parent_token_multiplier:
-  value: 7
-  unit: null
-  location: input
-  grand_unit: null
-  expr: null
-  formalized_expr: null
-  map: parent_token_multiplier
-total_tokens:
-  value: 57
-  unit: tokens
+people_on_first_ship:
+  value: null
+  unit: people
   location: target
-  grand_unit: tokens
-  expr: initial_tokens - total_spent + new_tokens
-  formalized_expr: initial_tokens - (fraction_wasted_pac_man * initial_tokens + fraction_wasted_candy_crush
-    * initial_tokens + tokens_wasted_ski_ball) + parent_token_multiplier * tokens_wasted_ski_ball
-  map: total_tokens
-new_tokens:
-  value: 49
-  unit: tokens
-  location: step1
-  grand_unit: tokens
-  expr: parent_token_multiplier * tokens_wasted_ski_ball
-  formalized_expr: parent_token_multiplier * tokens_wasted_ski_ball
-  map: tokens_from_parents
-tokens_wasted_pac_man:
-  value: 12
-  unit: tokens
-  location: step2
-  grand_unit: tokens
-  expr: fraction_wasted_pac_man * initial_tokens
-  formalized_expr: fraction_wasted_pac_man * initial_tokens
-  map: tokens_wasted_pac_man
-tokens_wasted_candy_crush:
-  value: 9
-  unit: tokens
-  location: step3
-  grand_unit: tokens
-  expr: fraction_wasted_candy_crush * initial_tokens
-  formalized_expr: fraction_wasted_candy_crush * initial_tokens
-  map: tokens_wasted_candy_crush
-total_spent:
-  value: 28
-  unit: tokens
-  location: step4
-  grand_unit: tokens
-  expr: tokens_wasted_pac_man + tokens_wasted_candy_crush + tokens_wasted_ski_ball
-  formalized_expr: fraction_wasted_pac_man * initial_tokens + fraction_wasted_candy_crush
-    * initial_tokens + tokens_wasted_ski_ball
-  map: total_wasted_tokens
+  grand_unit: people

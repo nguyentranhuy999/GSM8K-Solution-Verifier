@@ -1,30 +1,25 @@
-initial_tokens:
-  value: 36
-  unit: tokens
+hundred_years:
+  value: 100
+  unit: years
   location: input
-  grand_unit: tokens
-fraction_wasted_pac_man:
-  value: 0.3333333333333333
+  grand_unit: null
+three_hundred_years:
+  value: 300
+  unit: years
+  location: input
+  grand_unit: null
+consumed_people:
+  value: 847
+  unit: people
+  location: input
+  grand_unit: null
+ship_multiplier:
+  value: 2
   unit: null
   location: input
   grand_unit: null
-fraction_wasted_candy_crush:
-  value: 0.25
-  unit: null
-  location: input
-  grand_unit: null
-tokens_wasted_ski_ball:
-  value: 7
-  unit: tokens
-  location: input
-  grand_unit: tokens
-parent_token_multiplier:
-  value: 7
-  unit: null
-  location: input
-  grand_unit: null
-total_tokens:
+people_on_first_ship:
   value: null
-  unit: tokens
+  unit: people
   location: target
-  grand_unit: tokens
+  grand_unit: people

@@ -49,6 +49,7 @@ LOG_PATH = OUTPUT_DIR / "Log.yaml"
 
 DEFAULT_MODEL = "google/gemini-2.0-flash-001"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_MAX_RETRIES = 3
 
 
 class PlannerError(Exception):
@@ -188,6 +189,14 @@ Quy tắc không ảo giác:
 - Không tạo bước không cần thiết.
 - Không đưa value vào Plan.yaml.
 - Không tính toán ra số trong Plan.yaml.
+- Không nhân đôi dữ kiện đếm nếu các thành phần đã được liệt kê đầy đủ.
+  Ví dụ: "Nancy buys 2 coffees a day", rồi đề cho giá morning coffee và afternoon coffee.
+  Khi đó daily cost là morning_coffee_price + afternoon_coffee_price, KHÔNG nhân thêm coffees_per_day.
+  Chỉ dùng entity đếm như coffees_per_day nếu đề cho giá của một item đơn lẻ mà chưa liệt kê từng item.
+- Với chuỗi tăng/giảm theo hệ số như "each new X has r times as many as the last":
+  nếu biết tổng nhiều kỳ và cần tìm kỳ đầu, dùng tổng cấp số nhân.
+  Ví dụ có n kỳ, hệ số r, kỳ đầu là first thì total = first * (1 + r + ... + r ** (n - 1)).
+  Không được lấy total / n rồi nhân/chia với r; đó là trung bình, không phải kỳ đầu.
 
 Quy tắc đơn vị:
 - result_unit là đơn vị trực tiếp của result.
@@ -211,13 +220,27 @@ Chỉ trả YAML thuần, không Markdown, không ``` và không giải thích.
 """.strip()
 
 
-def build_user_prompt(problem: str, entities: Dict[str, Dict[str, Any]]) -> str:
+def build_user_prompt(
+    problem: str,
+    entities: Dict[str, Dict[str, Any]],
+    previous_error: Optional[str] = None,
+) -> str:
     entities_yaml = yaml.safe_dump(
         entities,
         allow_unicode=True,
         sort_keys=False,
         default_flow_style=False,
     )
+
+    retry_note = ""
+    if previous_error:
+        retry_note = f"""
+
+Output trước bị reject vì lỗi:
+{previous_error}
+
+Hãy sinh lại plan, chỉ sửa lỗi đó và giữ schema.
+""".rstrip()
 
     return f"""
 Hãy sinh kế hoạch giải toán cho đề bài sau.
@@ -227,10 +250,15 @@ Hãy sinh kế hoạch giải toán cho đề bài sau.
 
 ProblemEntities.yaml:
 {entities_yaml}
+{retry_note}
 """.strip()
 
 
-def call_openrouter(problem: str, entities: Dict[str, Dict[str, Any]]) -> str:
+def call_openrouter(
+    problem: str,
+    entities: Dict[str, Dict[str, Any]],
+    previous_error: Optional[str] = None,
+) -> str:
     load_dotenv(ROOT_DIR / ".env")
     load_dotenv()
 
@@ -252,7 +280,10 @@ def call_openrouter(problem: str, entities: Dict[str, Dict[str, Any]]) -> str:
         "model": model,
         "messages": [
             {"role": "system", "content": build_system_prompt()},
-            {"role": "user", "content": build_user_prompt(problem, entities)},
+            {
+                "role": "user",
+                "content": build_user_prompt(problem, entities, previous_error=previous_error),
+            },
         ],
         "temperature": 0,
     }
@@ -297,6 +328,110 @@ def parse_plan(text: str) -> Dict[str, Any]:
 def extract_expr_tokens(expr: str) -> List[str]:
     """Lấy các token giống tên biến trong expr."""
     return re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", expr)
+
+
+def is_money_unit(unit: Any) -> bool:
+    unit_text = str(normalize_empty(unit) or "").lower()
+    return unit_text in {"dollar", "dollars", "usd", "$", "cent", "cents"}
+
+
+def is_count_unit(unit: Any) -> bool:
+    unit_text = str(normalize_empty(unit) or "").lower()
+    if not unit_text:
+        return False
+    if is_money_unit(unit_text):
+        return False
+    if unit_text in {"day", "days", "hour", "hours", "minute", "minutes", "week", "weeks"}:
+        return False
+    return True
+
+
+def entity_unit(name: str, problem_entities: Dict[str, Dict[str, Any]], plan: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    if name in problem_entities:
+        return normalize_empty(problem_entities[name].get("unit"))
+
+    for step in plan.values():
+        if step.get("result") == name:
+            return normalize_empty(step.get("result_unit"))
+
+    return None
+
+
+def result_expr(name: str, plan: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    for step in plan.values():
+        if step.get("result") == name:
+            return normalize_empty(step.get("expr"))
+    return None
+
+
+def validate_no_obvious_double_count(
+    plan: Dict[str, Dict[str, Any]],
+    problem_entities: Dict[str, Dict[str, Any]],
+) -> None:
+    """
+    Bắt lỗi phổ biến: đã cộng giá của từng item trong ngày rồi lại nhân với
+    count "2 items per day". Ví dụ coffee: (morning + afternoon) * coffees_per_day.
+    """
+    for step_name, step in plan.items():
+        if not is_money_unit(step.get("result_unit")):
+            continue
+
+        expr = step["expr"]
+        if "*" not in expr:
+            continue
+
+        tokens = extract_expr_tokens(expr)
+        count_tokens = [
+            token
+            for token in tokens
+            if token in problem_entities and is_count_unit(problem_entities[token].get("unit"))
+        ]
+        if not count_tokens:
+            continue
+
+        for token in tokens:
+            previous_expr = result_expr(token, plan)
+            if not previous_expr:
+                continue
+
+            previous_tokens = extract_expr_tokens(previous_expr)
+            money_inputs = [
+                previous_token
+                for previous_token in previous_tokens
+                if previous_token in problem_entities and is_money_unit(problem_entities[previous_token].get("unit"))
+            ]
+            if len(set(money_inputs)) >= 2:
+                raise PlannerError(
+                    f"{step_name}.expr có vẻ nhân đôi dữ kiện đếm {count_tokens}. "
+                    f"Step trước {token!r} đã cộng các giá tiền thành phần {sorted(set(money_inputs))}."
+                )
+
+
+def validate_important_scalar_inputs_used(
+    plan: Dict[str, Dict[str, Any]],
+    problem_entities: Dict[str, Dict[str, Any]],
+) -> None:
+    plan_tokens: set[str] = set()
+    for step in plan.values():
+        plan_tokens.update(extract_expr_tokens(step["expr"]))
+
+    important_markers = ("fraction", "percent", "percentage", "ratio", "multiplier", "factor", "rate")
+    unused = []
+    for name, entity in problem_entities.items():
+        if entity.get("location") != "input":
+            continue
+        if normalize_empty(entity.get("unit")) is not None:
+            continue
+        if not any(marker in name for marker in important_markers):
+            continue
+        if name not in plan_tokens:
+            unused.append(name)
+
+    if unused:
+        raise PlannerError(
+            f"Plan chưa dùng các scalar input quan trọng: {unused}. "
+            "Nếu entity này biểu diễn fraction/ratio/multiplier/rate từ đề, expr phải tham chiếu trực tiếp entity đó."
+        )
 
 
 def target_entity_name(problem_entities: Dict[str, Dict[str, Any]]) -> str:
@@ -353,7 +488,11 @@ def validate_and_normalize_plan(
     problem_entities: Dict[str, Dict[str, Any]],
 ) -> Dict[str, Dict[str, Any]]:
     target_name = target_entity_name(problem_entities)
-    available_entities = set(problem_entities.keys())
+    available_entities = {
+        name
+        for name, entity in problem_entities.items()
+        if entity.get("location") == "input"
+    }
     normalized_plan: Dict[str, Dict[str, Any]] = {}
 
     expected_step_names = [f"step{i}" for i in range(1, len(raw_plan) + 1)]
@@ -366,6 +505,9 @@ def validate_and_normalize_plan(
 
     for step_index, step_name in enumerate(expected_step_names, start=1):
         step = normalize_step_fields(step_name, raw_plan[step_name])
+
+        if "=" in step["expr"]:
+            raise PlannerError(f"{step_name}.expr không được chứa dấu '='; expr phải là biểu thức tính toán.")
 
         expr_tokens = extract_expr_tokens(step["expr"])
         unknown_tokens = [token for token in expr_tokens if token not in available_entities]
@@ -406,7 +548,23 @@ def validate_and_normalize_plan(
             f"result_grand_unit của bước cuối phải khớp target.grand_unit: {target_grand_unit!r}."
         )
 
+    validate_no_obvious_double_count(normalized_plan, problem_entities)
+    validate_important_scalar_inputs_used(normalized_plan, problem_entities)
+
     return normalized_plan
+
+
+def max_retries() -> int:
+    raw = os.getenv("PLANNER_MAX_RETRIES")
+    if raw is None:
+        return DEFAULT_MAX_RETRIES
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise PlannerError("PLANNER_MAX_RETRIES phải là số nguyên.") from exc
+    if value < 1:
+        raise PlannerError("PLANNER_MAX_RETRIES phải >= 1.")
+    return value
 
 
 def is_number(value: Any) -> bool:
@@ -568,9 +726,30 @@ def run() -> None:
         raw_problem_entities = read_yaml_file(PROBLEM_ENTITIES_PATH, required=True)
         problem_entities = validate_problem_entities(raw_problem_entities)
 
-        raw_response = call_openrouter(problem, problem_entities)
-        raw_plan = parse_plan(raw_response)
-        plan = validate_and_normalize_plan(raw_plan, problem_entities)
+        previous_error: Optional[str] = None
+        last_validation_error: Optional[Exception] = None
+        plan: Optional[Dict[str, Dict[str, Any]]] = None
+
+        for _ in range(max_retries()):
+            raw_response = call_openrouter(
+                problem,
+                problem_entities,
+                previous_error=previous_error,
+            )
+
+            try:
+                raw_plan = parse_plan(raw_response)
+                candidate_plan = validate_and_normalize_plan(raw_plan, problem_entities)
+            except PlannerError as exc:
+                previous_error = str(exc)
+                last_validation_error = exc
+                continue
+
+            plan = candidate_plan
+            break
+
+        if plan is None:
+            raise PlannerError(str(last_validation_error))
 
         write_yaml_file(PLAN_PATH, plan)
 

@@ -1,0 +1,555 @@
+index,question,official_answer,target_entity,pipeline_answer,correct,solver_stdout,solver_stderr,problem_entities_yaml,plan_yaml,plan_entities_yaml,error_stage,error,duration_seconds
+1,"Nancy buys 2 coffees a day.  She grabs a double espresso for $3.00 every morning.  In the afternoon, she grabs an iced coffee for $2.50.  After 20 days, how much money has she spent on coffee?",110,total_cost,220,no,"Pass ProblemFormalizer
+Pass Planner
+Pass Executor
+Running ProblemFormalizer...
+Running Planner...
+Running Executor...
+Pass Solver",,"coffees_per_day:
+  value: 2
+  unit: coffees
+  location: input
+  grand_unit: coffees
+morning_coffee_price:
+  value: 3.0
+  unit: dollars
+  location: input
+  grand_unit: dollars
+afternoon_coffee_price:
+  value: 2.5
+  unit: dollars
+  location: input
+  grand_unit: dollars
+days:
+  value: 20
+  unit: days
+  location: input
+  grand_unit: null
+total_cost:
+  value: null
+  unit: dollars
+  location: target
+  grand_unit: dollars","step1:
+  expr: morning_coffee_price + afternoon_coffee_price
+  result: daily_coffee_cost
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 3.0 + 2.5 = 5.5
+step2:
+  expr: daily_coffee_cost * coffees_per_day
+  result: daily_total_cost
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 5.5 * 2.0 = 11.0
+step3:
+  expr: daily_total_cost * days
+  result: total_cost
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 11 * 20 = 220","coffees_per_day:
+  value: 2
+  unit: coffees
+  location: input
+  grand_unit: coffees
+  expr: null
+  formalized_expr: null
+morning_coffee_price:
+  value: 3.0
+  unit: dollars
+  location: input
+  grand_unit: dollars
+  expr: null
+  formalized_expr: null
+afternoon_coffee_price:
+  value: 2.5
+  unit: dollars
+  location: input
+  grand_unit: dollars
+  expr: null
+  formalized_expr: null
+days:
+  value: 20
+  unit: days
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+total_cost:
+  value: 220
+  unit: dollars
+  location: target
+  grand_unit: dollars
+  expr: daily_total_cost * days
+  formalized_expr: ((morning_coffee_price + afternoon_coffee_price) * coffees_per_day)
+    * days
+daily_coffee_cost:
+  value: 5.5
+  unit: dollars
+  location: step1
+  grand_unit: dollars
+  expr: morning_coffee_price + afternoon_coffee_price
+  formalized_expr: morning_coffee_price + afternoon_coffee_price
+daily_total_cost:
+  value: 11
+  unit: dollars
+  location: step2
+  grand_unit: dollars
+  expr: daily_coffee_cost * coffees_per_day
+  formalized_expr: (morning_coffee_price + afternoon_coffee_price) * coffees_per_day",,,7.385
+4,"There are 50 more pens than notebooks on Wesley's school library shelf. If there are 30 notebooks on the shelf, how many notebooks and pens, does he have altogether?",110,total_items,80,no,"Pass ProblemFormalizer
+Pass Planner
+Pass Executor
+Running ProblemFormalizer...
+Running Planner...
+Running Executor...
+Pass Solver",,"notebooks:
+  value: 30
+  unit: notebooks
+  location: input
+  grand_unit: items
+pens_more_than_notebooks:
+  value: 50
+  unit: pens
+  location: input
+  grand_unit: items
+total_items:
+  value: null
+  unit: items
+  location: target
+  grand_unit: items","step1:
+  expr: notebooks + pens_more_than_notebooks
+  result: total_items
+  result_unit: items
+  result_grand_unit: items
+  reported_expr: 30 + 50 = 80","notebooks:
+  value: 30
+  unit: notebooks
+  location: input
+  grand_unit: items
+  expr: null
+  formalized_expr: null
+pens_more_than_notebooks:
+  value: 50
+  unit: pens
+  location: input
+  grand_unit: items
+  expr: null
+  formalized_expr: null
+total_items:
+  value: 80
+  unit: items
+  location: target
+  grand_unit: items
+  expr: notebooks + pens_more_than_notebooks
+  formalized_expr: notebooks + pens_more_than_notebooks",,,3.359
+5,"Sara builds a birdhouse that is 1 foot wide, 2 feet tall and 2 feet deep. Jake builds a birdhouse that is 16 inches wide, 20 inches tall and 18 inches deep. What is the difference in volume between the two birdhouses?","1,152",volume_difference,0.6666666666666665,no,"Pass ProblemFormalizer
+Pass Planner
+Pass Executor
+Running ProblemFormalizer...
+Running Planner...
+Running Executor...
+Pass Solver",,"width_sara:
+  value: 1
+  unit: feet
+  location: input
+  grand_unit: feet
+height_sara:
+  value: 2
+  unit: feet
+  location: input
+  grand_unit: feet
+depth_sara:
+  value: 2
+  unit: feet
+  location: input
+  grand_unit: feet
+width_jake:
+  value: 16
+  unit: inches
+  location: input
+  grand_unit: inches
+height_jake:
+  value: 20
+  unit: inches
+  location: input
+  grand_unit: inches
+depth_jake:
+  value: 18
+  unit: inches
+  location: input
+  grand_unit: inches
+volume_difference:
+  value: null
+  unit: cubic_feet
+  location: target
+  grand_unit: cubic_feet","step1:
+  expr: width_sara * height_sara * depth_sara
+  result: volume_sara
+  result_unit: cubic_feet
+  result_grand_unit: cubic_feet
+  reported_expr: 1 * 2 * 2 = 4
+step2:
+  expr: width_jake * height_jake * depth_jake / 1728
+  result: volume_jake
+  result_unit: cubic_feet
+  result_grand_unit: cubic_feet
+  reported_expr: 16 * 20 * 18 / 1728 = 3.333333333333333333333333333
+step3:
+  expr: volume_sara - volume_jake
+  result: volume_difference
+  result_unit: cubic_feet
+  result_grand_unit: cubic_feet
+  reported_expr: 4.0000000000000000 - 3.3333333333333335 = 0.6666666666666665","width_sara:
+  value: 1
+  unit: feet
+  location: input
+  grand_unit: feet
+  expr: null
+  formalized_expr: null
+height_sara:
+  value: 2
+  unit: feet
+  location: input
+  grand_unit: feet
+  expr: null
+  formalized_expr: null
+depth_sara:
+  value: 2
+  unit: feet
+  location: input
+  grand_unit: feet
+  expr: null
+  formalized_expr: null
+width_jake:
+  value: 16
+  unit: inches
+  location: input
+  grand_unit: inches
+  expr: null
+  formalized_expr: null
+height_jake:
+  value: 20
+  unit: inches
+  location: input
+  grand_unit: inches
+  expr: null
+  formalized_expr: null
+depth_jake:
+  value: 18
+  unit: inches
+  location: input
+  grand_unit: inches
+  expr: null
+  formalized_expr: null
+volume_difference:
+  value: 0.6666666666666665
+  unit: cubic_feet
+  location: target
+  grand_unit: cubic_feet
+  expr: volume_sara - volume_jake
+  formalized_expr: width_sara * height_sara * depth_sara - width_jake * height_jake
+    * depth_jake / 1728
+volume_sara:
+  value: 4
+  unit: cubic_feet
+  location: step1
+  grand_unit: cubic_feet
+  expr: width_sara * height_sara * depth_sara
+  formalized_expr: width_sara * height_sara * depth_sara
+volume_jake:
+  value: 3.3333333333333335
+  unit: cubic_feet
+  location: step2
+  grand_unit: cubic_feet
+  expr: width_jake * height_jake * depth_jake / 1728
+  formalized_expr: width_jake * height_jake * depth_jake / 1728",,,8.816
+13,"Morgan's dad said that she had $90 budgeted for her birthday party. She wants to make sure she and her friends all get to play one round of mini-golf, have $5 in arcade tokens, and get to ride the go-karts twice. A round of mini-golf is $5. The Go-karts cost $10 a ride. How many friends can she invite?",2,,,no,"Fail ProblemFormalizer
+Running ProblemFormalizer...",Reason: go_kart_rides.value=2 không phải số được nêu trực tiếp trong đề.,"cards_given_to_each_student:
+  value: 23
+  unit: cards
+  location: input
+  grand_unit: cards
+number_of_students:
+  value: 15
+  unit: students
+  location: input
+  grand_unit: null
+cards_left:
+  value: 12
+  unit: cards
+  location: input
+  grand_unit: cards
+total_cards:
+  value: null
+  unit: cards
+  location: target
+  grand_unit: cards","step1:
+  expr: cards_given_to_each_student * number_of_students
+  result: total_cards_given_to_students
+  result_unit: cards
+  result_grand_unit: cards
+  reported_expr: 23 * 15 = 345
+step2:
+  expr: total_cards_given_to_students + cards_left
+  result: total_cards
+  result_unit: cards
+  result_grand_unit: cards
+  reported_expr: 345 + 12 = 357","cards_given_to_each_student:
+  value: 23
+  unit: cards
+  location: input
+  grand_unit: cards
+  expr: null
+  formalized_expr: null
+number_of_students:
+  value: 15
+  unit: students
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+cards_left:
+  value: 12
+  unit: cards
+  location: input
+  grand_unit: cards
+  expr: null
+  formalized_expr: null
+total_cards:
+  value: 357
+  unit: cards
+  location: target
+  grand_unit: cards
+  expr: total_cards_given_to_students + cards_left
+  formalized_expr: cards_given_to_each_student * number_of_students + cards_left
+total_cards_given_to_students:
+  value: 345
+  unit: cards
+  location: step1
+  grand_unit: cards
+  expr: cards_given_to_each_student * number_of_students
+  formalized_expr: cards_given_to_each_student * number_of_students",ProblemFormalizer,RuntimeError: Solver failed with exit code 1,2.593
+14,Jame has 60 bars of gold.  He uses 10% of them to pay for tax and then loses half of what is left in divorce.  How many gold bars does he have left?,27,,,no,"Fail ProblemFormalizer
+Running ProblemFormalizer...",Reason: gold_bars_used_for_tax.value=6 không phải số được nêu trực tiếp trong đề.,"cards_given_to_each_student:
+  value: 23
+  unit: cards
+  location: input
+  grand_unit: cards
+number_of_students:
+  value: 15
+  unit: students
+  location: input
+  grand_unit: null
+cards_left:
+  value: 12
+  unit: cards
+  location: input
+  grand_unit: cards
+total_cards:
+  value: null
+  unit: cards
+  location: target
+  grand_unit: cards","step1:
+  expr: cards_given_to_each_student * number_of_students
+  result: total_cards_given_to_students
+  result_unit: cards
+  result_grand_unit: cards
+  reported_expr: 23 * 15 = 345
+step2:
+  expr: total_cards_given_to_students + cards_left
+  result: total_cards
+  result_unit: cards
+  result_grand_unit: cards
+  reported_expr: 345 + 12 = 357","cards_given_to_each_student:
+  value: 23
+  unit: cards
+  location: input
+  grand_unit: cards
+  expr: null
+  formalized_expr: null
+number_of_students:
+  value: 15
+  unit: students
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+cards_left:
+  value: 12
+  unit: cards
+  location: input
+  grand_unit: cards
+  expr: null
+  formalized_expr: null
+total_cards:
+  value: 357
+  unit: cards
+  location: target
+  grand_unit: cards
+  expr: total_cards_given_to_students + cards_left
+  formalized_expr: cards_given_to_each_student * number_of_students + cards_left
+total_cards_given_to_students:
+  value: 345
+  unit: cards
+  location: step1
+  grand_unit: cards
+  expr: cards_given_to_each_student * number_of_students
+  formalized_expr: cards_given_to_each_student * number_of_students",ProblemFormalizer,RuntimeError: Solver failed with exit code 1,5.555
+17,"A smartphone seller is offering a discount of 5% off for customers who buy at least 2 smartphones at once. Melinda, Zoe and Joel want to buy an iPhone X each. If an iPhone X costs $600, how much can they save by pooling their money together and buying three iPhones at once from this seller rather than buying individually?",90,,,no,"Fail ProblemFormalizer
+Running ProblemFormalizer...",Reason: discount_percentage.value=5 không phải số được nêu trực tiếp trong đề.,"total_mail:
+  value: 180
+  unit: pieces
+  location: input
+  grand_unit: pieces
+friends_mail_delivery:
+  value: 41
+  unit: pieces
+  location: input
+  grand_unit: pieces
+number_of_friends:
+  value: 2
+  unit: null
+  location: input
+  grand_unit: null
+total_mail_johann:
+  value: null
+  unit: pieces
+  location: target
+  grand_unit: pieces","step1:
+  expr: friends_mail_delivery * number_of_friends
+  result: total_friends_mail
+  result_unit: pieces
+  result_grand_unit: pieces
+  reported_expr: 41 * 2 = 82
+step2:
+  expr: total_mail - total_friends_mail
+  result: total_mail_johann
+  result_unit: pieces
+  result_grand_unit: pieces
+  reported_expr: 180 - 82 = 98","total_mail:
+  value: 180
+  unit: pieces
+  location: input
+  grand_unit: pieces
+  expr: null
+  formalized_expr: null
+friends_mail_delivery:
+  value: 41
+  unit: pieces
+  location: input
+  grand_unit: pieces
+  expr: null
+  formalized_expr: null
+number_of_friends:
+  value: 2
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+total_mail_johann:
+  value: 98
+  unit: pieces
+  location: target
+  grand_unit: pieces
+  expr: total_mail - total_friends_mail
+  formalized_expr: total_mail - friends_mail_delivery * number_of_friends
+total_friends_mail:
+  value: 82
+  unit: pieces
+  location: step1
+  grand_unit: pieces
+  expr: friends_mail_delivery * number_of_friends
+  formalized_expr: friends_mail_delivery * number_of_friends",ProblemFormalizer,RuntimeError: Solver failed with exit code 1,2.587
+19,"Brianna reads two books a month. This year, she was given six new books as a gift, she bought eight new books, and she plans to borrow two fewer new books than she bought from the library. How many of her old books from her old book collection will she have to reread to have two books to read a month this year?",4,,,no,"Fail ProblemFormalizer
+Running ProblemFormalizer...",Reason: target_books_per_month là target nên value phải rỗng/null.,"initial_racers:
+  value: 100
+  unit: racers
+  location: input
+  grand_unit: racers
+racers_eliminated_first_segment:
+  value: 10
+  unit: racers
+  location: input
+  grand_unit: racers
+fraction_eliminated_second_segment:
+  value: 0.3333333333333333
+  unit: null
+  location: input
+  grand_unit: null
+fraction_eliminated_third_segment:
+  value: 0.5
+  unit: null
+  location: input
+  grand_unit: null
+racers_final_section:
+  value: null
+  unit: racers
+  location: target
+  grand_unit: racers","step1:
+  expr: initial_racers - racers_eliminated_first_segment
+  result: remaining_after_first_segment
+  result_unit: racers
+  result_grand_unit: racers
+  reported_expr: 100 - 10 = 90
+step2:
+  expr: remaining_after_first_segment * (1 - 0.3333333333333333)
+  result: remaining_after_second_segment
+  result_unit: racers
+  result_grand_unit: racers
+  reported_expr: 90 * (1 - 0.3333333333333333) = 60.000000000000003
+step3:
+  expr: remaining_after_second_segment * (1 - 0.5)
+  result: racers_final_section
+  result_unit: racers
+  result_grand_unit: racers
+  reported_expr: 60.0 * (1 - 0.5) = 30.0","initial_racers:
+  value: 100
+  unit: racers
+  location: input
+  grand_unit: racers
+  expr: null
+  formalized_expr: null
+racers_eliminated_first_segment:
+  value: 10
+  unit: racers
+  location: input
+  grand_unit: racers
+  expr: null
+  formalized_expr: null
+fraction_eliminated_second_segment:
+  value: 0.3333333333333333
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+fraction_eliminated_third_segment:
+  value: 0.5
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+racers_final_section:
+  value: 30
+  unit: racers
+  location: target
+  grand_unit: racers
+  expr: remaining_after_second_segment * (1 - 0.5)
+  formalized_expr: (initial_racers - racers_eliminated_first_segment) * (1 - 0.3333333333333333)
+    * (1 - 0.5)
+remaining_after_first_segment:
+  value: 90
+  unit: racers
+  location: step1
+  grand_unit: racers
+  expr: initial_racers - racers_eliminated_first_segment
+  formalized_expr: initial_racers - racers_eliminated_first_segment
+remaining_after_second_segment:
+  value: 60.0
+  unit: racers
+  location: step2
+  grand_unit: racers
+  expr: remaining_after_first_segment * (1 - 0.3333333333333333)
+  formalized_expr: (initial_racers - racers_eliminated_first_segment) * (1 - 0.3333333333333333)",ProblemFormalizer,RuntimeError: Solver failed with exit code 1,2.711

@@ -3,7 +3,7 @@ Main/Solver.py
 
 Pipeline giải bài toán đến bước solver/reference:
 1. Formalizer/ProblemFormalizer.py
-2. Formalizer/Solver/Planer.py
+2. Formalizer/Solver/Planner.py
 3. Formalizer/Solver/Executor.py
 
 File này chỉ chạy pipeline lời giải chuẩn/LLM. Nó không chạy phần student,
@@ -39,7 +39,7 @@ STAGES = [
     ),
     Stage(
         name="Planner",
-        command=[sys.executable, str(ROOT_DIR / "Formalizer" / "Solver" / "Planer.py")],
+        command=[sys.executable, str(ROOT_DIR / "Formalizer" / "Solver" / "Planner.py")],
     ),
     Stage(
         name="Executor",
