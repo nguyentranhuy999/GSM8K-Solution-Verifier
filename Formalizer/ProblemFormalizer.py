@@ -242,6 +242,18 @@ Nhiệm vụ của bạn:
    Không tự tạo multiplier 1.2 vì đó là số phải suy ra từ 1 + 0.2.
 10. Với cụm như "20% lighter", "20% less", chỉ trích xuất phần trăm trực tiếp là 0.2.
     Không tự tạo multiplier 0.8 vì đó là số phải suy ra từ 1 - 0.2.
+11. Với rate như "2 books a month", "5 pages per day", giữ chu kỳ trong tên entity.
+    Ví dụ: books_per_month, pages_per_day. Không đổi value thành tổng theo năm/ngày khác.
+12. Với quan hệ so sánh như "X has 2 fewer than Y", "X has 5 more than Y":
+    số trực tiếp là độ chênh lệch, không phải số lượng thật của X.
+    Tên entity phải thể hiện đây là độ chênh, ví dụ books_borrowed_fewer_than_books_bought.
+13. Không được bỏ sót số trực tiếp đi kèm đơn vị trong đề bài.
+    Ví dụ "in 7 days" phải có một input entity value 7, unit days, không được bỏ vì đã có "5 days" trước đó.
+14. Target phải là đúng đại lượng được hỏi, không phải đại lượng trung gian.
+    Ví dụ câu hỏi "How many old books ... reread" thì target phải chứa reread, như old_books_to_reread.
+    Không đặt target là total_books_needed nếu đề hỏi số sách cũ phải đọc lại.
+    Ví dụ câu hỏi "How many friends can she invite?" thì target phải là số friends, như total_friends.
+    Không đặt target là total_cost nếu đề hỏi số bạn được mời.
 
 Mỗi thực thể phải có đúng 4 trường:
 - value: giá trị số được cho trực tiếp trong đề bài. Với target, để rỗng bằng null.
@@ -450,8 +462,25 @@ def collect_unit_bases(entities: Dict[str, Dict[str, Any]]) -> set[str]:
     return bases
 
 
+AMBIGUOUS_TEXT_UNIT_ALIASES = {"in", "m", "g", "l"}
+
+
+def collect_unit_bases_from_problem(problem: str) -> set[str]:
+    text = problem.lower()
+    bases: set[str] = set()
+
+    for alias, base in UNIT_BASE_ALIASES.items():
+        if alias in AMBIGUOUS_TEXT_UNIT_ALIASES:
+            continue
+        if re.search(rf"\b{re.escape(alias)}\b", text):
+            bases.add(base)
+
+    return bases
+
+
 def add_standard_conversion_entities(
-    entities: Dict[str, Dict[str, Any]]
+    entities: Dict[str, Dict[str, Any]],
+    problem: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """
     Bổ sung hằng chuyển đổi đơn vị chuẩn dưới dạng input entity.
@@ -460,6 +489,9 @@ def add_standard_conversion_entities(
     đơn vị cần có để Planner giữ expr chỉ gồm biến.
     """
     unit_bases = collect_unit_bases(entities)
+    if problem:
+        unit_bases.update(collect_unit_bases_from_problem(problem))
+
     enriched = dict(entities)
 
     for smaller_unit, larger_unit, entity_name, value in STANDARD_CONVERSION_FACTORS:
@@ -478,8 +510,17 @@ def add_standard_conversion_entities(
     return enriched
 
 
-def looks_like_invited_friends_problem(problem: str, entities: Dict[str, Dict[str, Any]]) -> bool:
+def problem_asks_invited_friends(problem: str) -> bool:
     text = problem.lower()
+    if "invite" not in text:
+        return False
+    return bool(re.search(r"\bhow many friends\b", text))
+
+
+def looks_like_invited_friends_problem(problem: str, entities: Dict[str, Dict[str, Any]]) -> bool:
+    if not problem_asks_invited_friends(problem):
+        return False
+
     target_names = [
         name
         for name, entity in entities.items()
@@ -492,8 +533,8 @@ def looks_like_invited_friends_problem(problem: str, entities: Dict[str, Dict[st
 
     if "friend" not in target_text:
         return False
-    if "invite" not in text:
-        return False
+
+    text = problem.lower()
 
     return bool(
         re.search(
@@ -510,7 +551,7 @@ def add_default_context_entities(
 ) -> Dict[str, Dict[str, Any]]:
     enriched = dict(entities)
 
-    if looks_like_invited_friends_problem(problem, enriched) and "host_count" not in enriched:
+    if problem_asks_invited_friends(problem) and "host_count" not in enriched:
         enriched["host_count"] = {
             "value": 1,
             "unit": "people",
@@ -737,6 +778,39 @@ def extract_direct_numeric_values(problem: str) -> list[float]:
     return values
 
 
+def extract_required_unit_numeric_values(problem: str) -> list[float]:
+    """
+    Lấy các số dạng digit đi kèm một unit word ngay sau đó.
+
+    Đây là lớp bắt lỗi "miss số có đơn vị" như "in 7 days" mà không ép LLM
+    phải giữ mọi số có thể là nhãn/noise.
+    """
+    text = problem.lower()
+    values: list[float] = []
+
+    pattern = re.compile(
+        r"(?<![\w/])"
+        r"(\d+(?:,\d{3})*(?:\.\d+)?)"
+        r"(?!\s*/|\w|%)"
+        r"\s+([a-z][a-z-]*)\b"
+    )
+    ignored_following_words = {
+        "am",
+        "pm",
+        "a",
+        "an",
+        "the",
+    }
+
+    for match in pattern.finditer(text):
+        following_word = match.group(2)
+        if following_word in ignored_following_words:
+            continue
+        values.append(float(match.group(1).replace(",", "")))
+
+    return values
+
+
 def numbers_equal(left: float | int, right: float | int) -> bool:
     return abs(float(left) - float(right)) <= NUMBER_TOLERANCE
 
@@ -751,6 +825,11 @@ def format_number_for_error(value: float | int) -> str:
 def validate_values_are_direct(problem: str, entities: Dict[str, Dict[str, Any]]) -> None:
     expected_values = extract_direct_numeric_values(problem)
     unused_expected = expected_values.copy()
+    input_values = [
+        entity["value"]
+        for entity in entities.values()
+        if entity["location"] == "input"
+    ]
 
     for entity_name, entity in entities.items():
         if entity["location"] != "input":
@@ -776,6 +855,53 @@ def validate_values_are_direct(problem: str, entities: Dict[str, Dict[str, Any]]
         missing = ", ".join(format_number_for_error(value) for value in unused_expected)
         raise ProblemFormalizerError(
             f"Thiếu thực thể input cho các số/scalar trực tiếp trong đề: {missing}."
+        )
+
+    unused_input_values = input_values.copy()
+    missing_required_values: list[float] = []
+    for required_value in extract_required_unit_numeric_values(problem):
+        match_index = next(
+            (
+                index
+                for index, input_value in enumerate(unused_input_values)
+                if numbers_equal(input_value, required_value)
+            ),
+            None,
+        )
+        if match_index is None:
+            missing_required_values.append(required_value)
+            continue
+        del unused_input_values[match_index]
+
+    if missing_required_values:
+        missing = ", ".join(format_number_for_error(value) for value in missing_required_values)
+        raise ProblemFormalizerError(
+            f"Thiếu thực thể input cho số trực tiếp có đơn vị trong đề: {missing}."
+        )
+
+
+def target_entity_name(entities: Dict[str, Dict[str, Any]]) -> str:
+    targets = [name for name, entity in entities.items() if entity.get("location") == "target"]
+    if len(targets) != 1:
+        raise ProblemFormalizerError(f"Phải có đúng 1 entity target, hiện có {len(targets)}.")
+    return targets[0]
+
+
+def validate_target_name_matches_question(problem: str, entities: Dict[str, Dict[str, Any]]) -> None:
+    text = problem.lower()
+    target_name = target_entity_name(entities)
+
+    required_terms: list[str] = []
+    if re.search(r"\breread\b", text):
+        required_terms.append("reread")
+    if problem_asks_invited_friends(problem):
+        required_terms.append("friend")
+
+    missing_terms = [term for term in required_terms if term not in target_name]
+    if missing_terms:
+        raise ProblemFormalizerError(
+            f"Target {target_name!r} chưa khớp đại lượng được hỏi; "
+            f"tên target cần chứa {missing_terms}."
         )
 
 
@@ -873,6 +999,7 @@ def run() -> None:
                 parsed_entities = parse_yaml(raw_response)
                 candidate_entities = validate_and_normalize(parsed_entities)
                 validate_values_are_direct(problem, candidate_entities)
+                validate_target_name_matches_question(problem, candidate_entities)
             except ProblemFormalizerError as exc:
                 previous_error = str(exc)
                 last_validation_error = exc
@@ -885,7 +1012,7 @@ def run() -> None:
             raise ProblemFormalizerError(str(last_validation_error))
 
         entities = normalize_item_target_grand_units(entities)
-        entities = add_standard_conversion_entities(entities)
+        entities = add_standard_conversion_entities(entities, problem=problem)
         entities = add_default_context_entities(problem, entities)
         dump_entities(entities)
         copy_entities_to_downstream_files()

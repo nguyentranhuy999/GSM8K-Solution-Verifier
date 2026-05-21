@@ -162,8 +162,8 @@ def decimal_equal(a: Decimal, b: Decimal, tolerance: Decimal = Decimal("0.000001
 def parse_numbers_from_text(text: str) -> List[Decimal]:
     if text is None:
         return []
-    # Hỗ trợ $3.00, -3.5, 1,000.25. Không xử lý phân số chữ ở checker này.
-    raw_numbers = re.findall(r"[-+]?\d{1,3}(?:,\d{3})*(?:\.\d+)?|[-+]?\d+(?:\.\d+)?", str(text))
+    # Hỗ trợ $3.00, -3.5, 1800, 1,000.25. Không xử lý phân số chữ ở checker này.
+    raw_numbers = re.findall(r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", str(text))
     numbers: List[Decimal] = []
     for raw in raw_numbers:
         try:
@@ -367,6 +367,26 @@ def check_wrong_target(plan: Dict[str, Any], entities: Dict[str, Dict[str, Any]]
             add_error(errors, "wrong target", entity=None)
         elif chosen_target not in entities or entities[chosen_target].get("location") != "target":
             add_error(errors, "wrong target", entity=chosen_target)
+
+
+def check_negative_count_target(entities: Dict[str, Dict[str, Any]], errors: List[Dict[str, Any]]) -> None:
+    for target_name, entity in entities.items():
+        if entity.get("location") != "target":
+            continue
+        if not is_generic_count_unit(entity.get("unit")):
+            continue
+
+        value = normalize_empty(entity.get("value"))
+        if value is None:
+            continue
+
+        try:
+            numeric_value = to_decimal(value, context=f"{target_name}.value")
+        except InsideCheckerError:
+            continue
+
+        if numeric_value < 0:
+            add_error(errors, "logic error", step=entity.get("location"), entity=target_name)
 
 
 def check_wrong_calculation(plan: Dict[str, Any], errors: List[Dict[str, Any]]) -> None:
@@ -717,6 +737,7 @@ def run_checks(mode: str) -> List[Dict[str, Any]]:
     errors: List[Dict[str, Any]] = []
 
     check_wrong_target(plan, entities, errors, mode=mode)
+    check_negative_count_target(entities, errors)
     check_wrong_calculation(plan, errors)
     check_unit_missing(entities, errors, mode=mode)
     check_only_final_answer(plan, errors)

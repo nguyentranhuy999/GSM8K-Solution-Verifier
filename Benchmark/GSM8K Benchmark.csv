@@ -61,7 +61,7 @@ To find the total number of items, we add notebooks and pens.
 Total items = 30 notebooks + 80 pens = 110 items.
 Therefore, the final answer is 110.","Total items = 30 + 30+ 50 = 110 items.
 Therefore, the final answer is 110.",combine steps,no,,,
-"Sara builds a birdhouse that is 1 foot wide, 2 feet tall and 2 feet deep. Jake builds a birdhouse that is 16 inches wide, 20 inches tall and 18 inches deep. What is the difference in volume between the two birdhouses?","1,152","Convert Sara's birdhouse dimensions to inches: 1 foot = 12 inches, 2 feet = 24 inches.
+"Sara builds a birdhouse that is 1 foot wide, 2 feet tall and 2 feet deep. Jake builds a birdhouse that is 16 inches wide, 20 inches tall and 18 inches deep. What is the difference in volume between the two birdhouses in inches?",1152,"Convert Sara's birdhouse dimensions to inches: 1 foot = 12 inches, 2 feet = 24 inches.
 Sara's birdhouse is 12 inches wide, 24 inches tall, and 24 inches deep.
 Calculate Sara's birdhouse volume: 12 × 24 × 24 = 6,912 cubic inches.
 Jake's birdhouse volume: 16 × 20 × 18 = 5,760 cubic inches.

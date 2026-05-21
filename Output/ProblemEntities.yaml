@@ -1,19 +1,24 @@
-smartphone_cost:
-  value: 600
+tomatoes_harvested:
+  value: 200
+  unit: tomatoes
+  location: input
+  grand_unit: tomatoes
+carrots_harvested:
+  value: 350
+  unit: carrots
+  location: input
+  grand_unit: carrots
+tomato_price:
+  value: 1.0
   unit: dollars
   location: input
   grand_unit: dollars
-discount_percentage:
-  value: 0.05
-  unit: null
+carrot_price:
+  value: 1.5
+  unit: dollars
   location: input
-  grand_unit: null
-number_of_smartphones:
-  value: 3
-  unit: smartphones
-  location: input
-  grand_unit: smartphones
-total_savings:
+  grand_unit: dollars
+total_money:
   value: null
   unit: dollars
   location: target

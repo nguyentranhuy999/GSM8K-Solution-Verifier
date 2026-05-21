@@ -1,51 +1,49 @@
-smartphone_cost:
-  value: 600
+tomatoes_harvested:
+  value: 200
+  unit: tomatoes
+  location: input
+  grand_unit: tomatoes
+  expr: null
+  formalized_expr: null
+carrots_harvested:
+  value: 350
+  unit: carrots
+  location: input
+  grand_unit: carrots
+  expr: null
+  formalized_expr: null
+tomato_price:
+  value: 1.0
   unit: dollars
   location: input
   grand_unit: dollars
   expr: null
   formalized_expr: null
-discount_percentage:
-  value: 0.05
-  unit: null
+carrot_price:
+  value: 1.5
+  unit: dollars
   location: input
-  grand_unit: null
+  grand_unit: dollars
   expr: null
   formalized_expr: null
-number_of_smartphones:
-  value: 3
-  unit: smartphones
-  location: input
-  grand_unit: smartphones
-  expr: null
-  formalized_expr: null
-total_savings:
-  value: 1710
+total_money:
+  value: 725
   unit: dollars
   location: target
   grand_unit: dollars
-  expr: total_cost_without_discount - total_discount
-  formalized_expr: smartphone_cost * number_of_smartphones - smartphone_cost * number_of_smartphones
-    * discount_percentage
-total_cost_without_discount:
-  value: 1800
+  expr: total_tomato_money + total_carrot_money
+  formalized_expr: tomatoes_harvested * tomato_price + carrots_harvested * carrot_price
+total_tomato_money:
+  value: 200
   unit: dollars
   location: step1
   grand_unit: dollars
-  expr: smartphone_cost * number_of_smartphones
-  formalized_expr: smartphone_cost * number_of_smartphones
-total_discount:
-  value: 90
+  expr: tomatoes_harvested * tomato_price
+  formalized_expr: tomatoes_harvested * tomato_price
+total_carrot_money:
+  value: 525
   unit: dollars
   location: step2
   grand_unit: dollars
-  expr: smartphone_cost * number_of_smartphones * discount_percentage
-  formalized_expr: smartphone_cost * number_of_smartphones * discount_percentage
-total_cost_with_discount:
-  value: 1710
-  unit: dollars
-  location: step3
-  grand_unit: dollars
-  expr: total_cost_without_discount - total_discount
-  formalized_expr: smartphone_cost * number_of_smartphones - smartphone_cost * number_of_smartphones
-    * discount_percentage
+  expr: carrots_harvested * carrot_price
+  formalized_expr: carrots_harvested * carrot_price

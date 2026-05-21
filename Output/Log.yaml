@@ -1,6 +1,4 @@
 ProblemFormalizer: Pass ProblemFormalizer
 Planner: Pass Planner
 InsideChecker: Pass InsideChecker
-Executor: Fail Executor
-Executor_message: 'InsideChecker vẫn còn lỗi sau 5 lần repair. Checker output: Pass
-  InsideChecker'
+Executor: Pass Executor

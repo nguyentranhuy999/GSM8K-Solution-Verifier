@@ -1,24 +1,18 @@
 step1:
-  expr: smartphone_cost * number_of_smartphones
-  result: total_cost_without_discount
+  expr: tomatoes_harvested * tomato_price
+  result: total_tomato_money
   result_unit: dollars
   result_grand_unit: dollars
-  reported_expr: 600 * 3 = 1800
+  reported_expr: 200.0 * 1.0 = 200.0
 step2:
-  expr: smartphone_cost * number_of_smartphones * discount_percentage
-  result: total_discount
+  expr: carrots_harvested * carrot_price
+  result: total_carrot_money
   result_unit: dollars
   result_grand_unit: dollars
-  reported_expr: 600.00 * 3.00 * 0.05 = 90.00
+  reported_expr: 350.0 * 1.5 = 525.0
 step3:
-  expr: total_cost_without_discount - total_discount
-  result: total_cost_with_discount
+  expr: total_tomato_money + total_carrot_money
+  result: total_money
   result_unit: dollars
   result_grand_unit: dollars
-  reported_expr: 1800 - 90 = 1710
-step4:
-  expr: total_cost_without_discount - total_discount
-  result: total_savings
-  result_unit: dollars
-  result_grand_unit: dollars
-  reported_expr: 1800 - 90 = 1710
+  reported_expr: 200 + 525 = 725
