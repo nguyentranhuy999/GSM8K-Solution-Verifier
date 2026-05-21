@@ -1,12 +1,24 @@
 step1:
-  expr: notebooks + pens_more_than_notebooks
-  result: pens
-  result_unit: pens
-  result_grand_unit: items
-  reported_expr: 30 + 50 = 80
+  expr: smartphone_cost * number_of_smartphones
+  result: total_cost_without_discount
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 600 * 3 = 1800
 step2:
-  expr: notebooks + pens
-  result: total_items
-  result_unit: items
-  result_grand_unit: items
-  reported_expr: 30 + 80 = 110
+  expr: smartphone_cost * number_of_smartphones * discount_percentage
+  result: total_discount
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 600.00 * 3.00 * 0.05 = 90.00
+step3:
+  expr: total_cost_without_discount - total_discount
+  result: total_cost_with_discount
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 1800 - 90 = 1710
+step4:
+  expr: total_cost_without_discount - total_discount
+  result: total_savings
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 1800 - 90 = 1710

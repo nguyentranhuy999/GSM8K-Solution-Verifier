@@ -31,6 +31,7 @@ import json
 import os
 import re
 import sys
+import ast
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -184,7 +185,7 @@ Quy tắc step:
 - Tuyệt đối không viết số literal trong expr, kể cả 0, 1, 2, 36, 60, 0.5, 1/3, hay số mũ như ** 2.
 - Nếu một hệ số là dữ kiện trong đề, hệ số đó phải là entity input trong ProblemEntities.
 - Nếu cần hệ số trung gian như 1, hãy tạo từ entity đã có. Ví dụ: identity_multiplier = growth_multiplier / growth_multiplier.
-- Nếu cần đổi đơn vị, chỉ dùng đúng tên conversion factor đã có trong ProblemEntities, ví dụ inches_per_foot.
+- Nếu cần đổi đơn vị, chỉ dùng đúng tên conversion factor đã có trong ProblemEntities, ví dụ unit_conversion_inches_per_foot.
 - Không tự đặt tên chung chung như conversion_factor nếu tên đó không tồn tại trong ProblemEntities.
 
 Quy tắc không ảo giác:
@@ -196,6 +197,18 @@ Quy tắc không ảo giác:
   Ví dụ: "Nancy buys 2 coffees a day", rồi đề cho giá morning coffee và afternoon coffee.
   Khi đó daily cost là morning_coffee_price + afternoon_coffee_price, KHÔNG nhân thêm coffees_per_day.
   Chỉ dùng entity đếm như coffees_per_day nếu đề cho giá của một item đơn lẻ mà chưa liệt kê từng item.
+- Với phần trăm tăng/giảm như "20% heavier", "20% more", "20% less":
+  không viết base * (1 + percentage) hoặc base * (1 - percentage).
+  Hãy tách thành bước riêng: increase_amount = base * percentage, rồi final = base + increase_amount.
+  Với giảm: decrease_amount = base * percentage, rồi final = base - decrease_amount.
+- Với bài có dạng "she/he and her/his friends all get/do..." và hỏi "how many friends can she/he invite":
+  target là số friends được mời, không tính người chủ.
+  Trước tiên tính full cost per person gồm tất cả hoạt động/items mỗi người nhận.
+  Sau đó có thể làm một trong hai cách:
+  Cách A: remaining_budget = budget - full_cost_per_person, rồi friends = remaining_budget / full_cost_per_person.
+  Cách B: total_people = budget / full_cost_per_person, rồi friends = total_people - host_count nếu ProblemEntities có host_count.
+  Với total_people, result_unit và result_grand_unit phải là people, không phải dollars.
+  Không được chia remaining_budget cho một thành phần riêng lẻ như mini_golf_price.
 - Entity có tên dạng x_more_than_y, x_less_than_y, x_fewer_than_y là độ chênh lệch, không phải số lượng thật của x.
   Nếu cần tổng gồm cả x và y, phải tạo x trước rồi mới cộng tổng.
   Ví dụ pens_more_than_notebooks không phải số pens.
@@ -347,6 +360,14 @@ RELATIVE_DIFFERENCE_MARKERS = {
     "_fewer_than_": "-",
 }
 
+RELATIVE_DELTA_PREFIXES = {
+    "additional_": "+",
+    "extra_": "+",
+    "more_": "+",
+    "fewer_": "-",
+    "less_": "-",
+}
+
 
 def extract_expr_tokens(expr: str) -> List[str]:
     """Lấy các token giống tên biến trong expr."""
@@ -358,9 +379,40 @@ def extract_numeric_literals(expr: str) -> List[str]:
     return [match.group(0) for match in NUMERIC_LITERAL_RE.finditer(expr)]
 
 
-def validate_no_numeric_literals_in_expr(step_name: str, expr: str) -> None:
+def validate_no_numeric_literals_in_expr(
+    step_name: str,
+    expr: str,
+    *,
+    problem: Optional[str] = None,
+    target_name: Optional[str] = None,
+    target: Optional[Dict[str, Any]] = None,
+) -> None:
     numeric_literals = extract_numeric_literals(expr)
     if numeric_literals:
+        expr_token_set = set(extract_expr_tokens(expr))
+        if "1" in numeric_literals and any(
+            marker in token
+            for token in expr_token_set
+            for marker in ("percent", "percentage")
+        ):
+            raise PlannerError(
+                f"{step_name}.expr không được dùng số 1 để tạo multiplier phần trăm. "
+                "Với phần trăm tăng/giảm, hãy tách bước: change_amount = base * percentage, "
+                "rồi final = base + change_amount hoặc final = base - change_amount."
+            )
+
+        if (
+            "1" in numeric_literals
+            and target_name
+            and target
+            and looks_like_invited_friends_problem(problem, target_name, target)
+        ):
+            raise PlannerError(
+                f"{step_name}.expr không được viết số 1 trực tiếp để trừ người chủ. "
+                "Nếu ProblemEntities có host_count, hãy dùng trực tiếp host_count. "
+                "Nếu chưa có, hãy tạo identity từ full_cost_per_person."
+            )
+
         raise PlannerError(
             f"{step_name}.expr không được chứa số literal {numeric_literals}; "
             "expr chỉ được dùng entity/result và toán tử. "
@@ -378,6 +430,16 @@ def parse_relative_difference_entity_name(name: str) -> Optional[Tuple[str, str,
     return None
 
 
+def parse_relative_delta_entity_name(name: str) -> Optional[Tuple[str, str]]:
+    for prefix, operator_symbol in RELATIVE_DELTA_PREFIXES.items():
+        if not name.startswith(prefix):
+            continue
+        quantity_name = name[len(prefix):]
+        if quantity_name:
+            return quantity_name, operator_symbol
+    return None
+
+
 def singularize_token(token: str) -> str:
     if token.endswith("ies") and len(token) > 3:
         return f"{token[:-3]}y"
@@ -390,7 +452,7 @@ def singularize_token(token: str) -> str:
 
 def entity_name_terms(name: str) -> set[str]:
     terms = {term for term in name.split("_") if term}
-    terms.update(singularize_token(term) for term in terms)
+    terms.update(singularize_token(term) for term in list(terms))
     return terms
 
 
@@ -423,24 +485,184 @@ def validate_relative_difference_entities_resolved(
                 continue
 
             parsed = parse_relative_difference_entity_name(token)
-            if not parsed:
+            delta_parsed = parse_relative_delta_entity_name(token)
+            if parsed:
+                compared_quantity, reference_quantity, operator_symbol = parsed
+                relationship_hint = f" so với {reference_quantity!r}"
+            elif delta_parsed:
+                compared_quantity, operator_symbol = delta_parsed
+                relationship_hint = ""
+            else:
                 continue
 
-            compared_quantity, reference_quantity, operator_symbol = parsed
             if result_name_mentions_quantity(result, compared_quantity):
                 if operator_symbol not in expr:
                     raise PlannerError(
                         f"{step_name}.expr dùng {token!r} nhưng thiếu phép {operator_symbol!r} "
-                        f"để tạo số lượng thật {compared_quantity!r} so với {reference_quantity!r}."
+                        f"để tạo số lượng thật {compared_quantity!r}{relationship_hint}."
                     )
                 continue
 
             raise PlannerError(
                 f"{step_name}.expr dùng {token!r} như một số lượng thật. "
                 f"{token!r} là độ chênh lệch, nên phải tạo entity {compared_quantity!r} trước: "
-                f"{compared_quantity} = {reference_quantity} {operator_symbol} {token}. "
+                f"{compared_quantity} = base_quantity {operator_symbol} {token}. "
                 f"Sau đó mới dùng {compared_quantity!r} để tính {result!r}."
             )
+
+
+def result_step_by_entity(plan: Dict[str, Dict[str, Any]]) -> Dict[str, Tuple[str, Dict[str, Any]]]:
+    return {
+        step["result"]: (step_name, step)
+        for step_name, step in plan.items()
+    }
+
+
+def target_step(plan: Dict[str, Dict[str, Any]], target_name: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+    for step_name, step in plan.items():
+        if step.get("result") == target_name:
+            return step_name, step
+    return None
+
+
+def step_lineage_to_result(
+    plan: Dict[str, Dict[str, Any]],
+    result_name: str,
+) -> Dict[str, Dict[str, Any]]:
+    by_result = result_step_by_entity(plan)
+    lineage: Dict[str, Dict[str, Any]] = {}
+
+    def visit(entity_name: str) -> None:
+        produced = by_result.get(entity_name)
+        if not produced:
+            return
+
+        step_name, step = produced
+        if step_name in lineage:
+            return
+
+        lineage[step_name] = step
+        for token in extract_expr_tokens(step["expr"]):
+            visit(token)
+
+    visit(result_name)
+    return lineage
+
+
+def expr_has_division_by_token(expr: str, token_name: str) -> bool:
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except SyntaxError:
+        return False
+
+    def contains_token(node: ast.AST) -> bool:
+        return any(isinstance(child, ast.Name) and child.id == token_name for child in ast.walk(node))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            if contains_token(node.right):
+                return True
+    return False
+
+
+def looks_like_invited_friends_problem(
+    problem: Optional[str],
+    target_name: str,
+    target: Dict[str, Any],
+) -> bool:
+    if not problem:
+        return False
+
+    text = problem.lower()
+    target_text = f"{target_name} {normalize_empty(target.get('unit')) or ''}".lower()
+    if "friend" not in target_text:
+        return False
+    if "invite" not in text:
+        return False
+
+    return bool(
+        re.search(
+            r"\b(?:she|he|they|we|i|[a-z]+)\s+and\s+"
+            r"(?:her|his|their|our|my)\s+friends\b",
+            text,
+        )
+    )
+
+
+def full_money_cost_results(
+    plan: Dict[str, Dict[str, Any]],
+    problem_entities: Dict[str, Dict[str, Any]],
+    target_name: str,
+) -> List[str]:
+    results: List[str] = []
+    for step in plan.values():
+        result = step["result"]
+        if result == target_name:
+            continue
+        if not is_money_unit(step.get("result_unit")):
+            continue
+
+        money_inputs = [
+            token
+            for token in extract_expr_tokens(step["expr"])
+            if token in problem_entities and is_money_unit(problem_entities[token].get("unit"))
+        ]
+        if len(set(money_inputs)) >= 2:
+            results.append(result)
+
+    return results
+
+
+def validate_invited_friends_uses_full_per_person_cost(
+    plan: Dict[str, Dict[str, Any]],
+    problem_entities: Dict[str, Dict[str, Any]],
+    problem: Optional[str],
+) -> None:
+    target_name = target_entity_name(problem_entities)
+    target = problem_entities[target_name]
+
+    if not looks_like_invited_friends_problem(problem, target_name, target):
+        return
+
+    candidate_cost_results = full_money_cost_results(plan, problem_entities, target_name)
+    if not candidate_cost_results:
+        return
+
+    lineage = step_lineage_to_result(plan, target_name)
+    for step in lineage.values():
+        if any(expr_has_division_by_token(step["expr"], cost_result) for cost_result in candidate_cost_results):
+            return
+
+    raise PlannerError(
+        "Bài hỏi số friends được mời trong nhóm gồm người chủ và friends. "
+        f"Plan phải chia cho full cost per person {candidate_cost_results}, "
+        "không được chia cho một thành phần riêng lẻ như mini_golf_price. "
+        "Có thể tính remaining_budget = budget - full_cost_per_person rồi friends = remaining_budget / full_cost_per_person."
+    )
+
+
+def normalize_invited_friends_people_units(
+    plan: Dict[str, Dict[str, Any]],
+    problem_entities: Dict[str, Dict[str, Any]],
+    problem: Optional[str],
+) -> None:
+    target_name = target_entity_name(problem_entities)
+    target = problem_entities[target_name]
+
+    if not looks_like_invited_friends_problem(problem, target_name, target):
+        return
+
+    candidate_cost_results = full_money_cost_results(plan, problem_entities, target_name)
+    if not candidate_cost_results:
+        return
+
+    for step in plan.values():
+        result = step["result"]
+        if "people" not in entity_name_terms(result):
+            continue
+        if any(expr_has_division_by_token(step["expr"], cost_result) for cost_result in candidate_cost_results):
+            step["result_unit"] = "people"
+            step["result_grand_unit"] = "people"
 
 
 def is_money_unit(unit: Any) -> bool:
@@ -457,6 +679,21 @@ def is_count_unit(unit: Any) -> bool:
     if unit_text in {"day", "days", "hour", "hours", "minute", "minutes", "week", "weeks"}:
         return False
     return True
+
+
+def normalize_item_target_result_grand_units(
+    plan: Dict[str, Dict[str, Any]],
+    target_unit: Any,
+    target_grand_unit: Any,
+) -> None:
+    target_unit_text = str(normalize_empty(target_unit) or "").strip().lower()
+    if target_unit_text not in {"item", "items"}:
+        return
+
+    grand_unit = normalize_empty(target_grand_unit) or target_unit
+    for step in plan.values():
+        if is_count_unit(step.get("result_unit")):
+            step["result_grand_unit"] = grand_unit
 
 
 def entity_unit(name: str, problem_entities: Dict[str, Dict[str, Any]], plan: Dict[str, Dict[str, Any]]) -> Optional[str]:
@@ -599,8 +836,10 @@ def normalize_step_fields(step_name: str, step: Dict[str, Any]) -> Dict[str, Any
 def validate_and_normalize_plan(
     raw_plan: Dict[str, Any],
     problem_entities: Dict[str, Dict[str, Any]],
+    problem: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
     target_name = target_entity_name(problem_entities)
+    target = problem_entities[target_name]
     available_entities = {
         name
         for name, entity in problem_entities.items()
@@ -622,7 +861,13 @@ def validate_and_normalize_plan(
         if "=" in step["expr"]:
             raise PlannerError(f"{step_name}.expr không được chứa dấu '='; expr phải là biểu thức tính toán.")
 
-        validate_no_numeric_literals_in_expr(step_name, step["expr"])
+        validate_no_numeric_literals_in_expr(
+            step_name,
+            step["expr"],
+            problem=problem,
+            target_name=target_name,
+            target=target,
+        )
 
         expr_tokens = extract_expr_tokens(step["expr"])
         unknown_tokens = [token for token in expr_tokens if token not in available_entities]
@@ -649,7 +894,6 @@ def validate_and_normalize_plan(
             f"Bước cuối phải tạo target {target_name!r}, hiện tạo {last_step['result']!r}."
         )
 
-    target = problem_entities[target_name]
     target_unit = normalize_empty(target.get("unit"))
     target_grand_unit = normalize_empty(target.get("grand_unit"))
 
@@ -663,9 +907,13 @@ def validate_and_normalize_plan(
             f"result_grand_unit của bước cuối phải khớp target.grand_unit: {target_grand_unit!r}."
         )
 
+    normalize_item_target_result_grand_units(normalized_plan, target_unit, target_grand_unit)
+    normalize_invited_friends_people_units(normalized_plan, problem_entities, problem)
+
     validate_no_obvious_double_count(normalized_plan, problem_entities)
     validate_important_scalar_inputs_used(normalized_plan, problem_entities)
     validate_relative_difference_entities_resolved(normalized_plan, problem_entities)
+    validate_invited_friends_uses_full_per_person_cost(normalized_plan, problem_entities, problem)
 
     return normalized_plan
 
@@ -855,7 +1103,7 @@ def run() -> None:
 
             try:
                 raw_plan = parse_plan(raw_response)
-                candidate_plan = validate_and_normalize_plan(raw_plan, problem_entities)
+                candidate_plan = validate_and_normalize_plan(raw_plan, problem_entities, problem=problem)
             except PlannerError as exc:
                 previous_error = str(exc)
                 last_validation_error = exc

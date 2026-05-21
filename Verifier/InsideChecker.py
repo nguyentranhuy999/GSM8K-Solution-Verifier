@@ -220,9 +220,6 @@ def eval_ast_node(node: ast.AST, values: Optional[Dict[str, Decimal]] = None) ->
             return Decimal(str(node.value))
         raise InsideCheckerError(f"Hằng không hợp lệ: {node.value!r}")
 
-    if isinstance(node, ast.Num):  # pragma: no cover
-        return Decimal(str(node.n))
-
     if isinstance(node, ast.Name):
         if node.id not in values:
             raise InsideCheckerError(f"Biến {node.id!r} chưa có value.")
@@ -423,12 +420,36 @@ CONVERTIBLE_UNIT_GROUPS = [
     {"dozen", "dozens", "item", "items", "piece", "pieces"},
 ]
 
+NON_COUNT_UNITS = {
+    "dollar", "dollars", "usd", "$", "cent", "cents",
+    "mm", "millimeter", "millimeters", "cm", "centimeter", "centimeters",
+    "m", "meter", "meters", "km", "kilometer", "kilometers",
+    "inch", "inches", "ft", "foot", "feet", "yard", "yards", "mile", "miles",
+    "mg", "milligram", "milligrams", "g", "gram", "grams",
+    "kg", "kilogram", "kilograms", "ton", "tons",
+    "lb", "lbs", "pound", "pounds", "ounce", "ounces",
+    "ml", "milliliter", "milliliters", "l", "liter", "liters",
+    "gallon", "gallons", "quart", "quarts", "pint", "pints", "cup", "cups",
+    "mm2", "cm2", "m2", "km2",
+    "square_meters", "square_meter", "square_centimeters", "square_centimeter",
+    "square_feet", "square_foot", "hectare", "hectares", "acre", "acres",
+    "second", "seconds", "minute", "minutes", "hour", "hours",
+    "day", "days", "week", "weeks", "month", "months", "year", "years",
+}
+
 
 def normalized_unit(unit: Any) -> Optional[str]:
     unit = normalize_empty(unit)
     if unit is None:
         return None
     return str(unit).strip().lower().replace(" ", "_")
+
+
+def is_generic_count_unit(unit: Any) -> bool:
+    normalized = normalized_unit(unit)
+    if not normalized:
+        return False
+    return normalized not in NON_COUNT_UNITS
 
 
 def same_convertible_family(unit_a: Any, unit_b: Any) -> bool:
@@ -487,6 +508,8 @@ def check_wrong_relationship(plan: Dict[str, Any], entities: Dict[str, Dict[str,
             grand_diff = left_grand != right_grand
 
             if unit_diff and grand_diff:
+                if is_generic_count_unit(left_unit) and is_generic_count_unit(right_unit):
+                    continue
                 if same_convertible_family(left_unit, right_unit) or same_convertible_family(left_grand, right_grand):
                     add_error(errors, "do not convert units", step=sname, entity=step.get("result"))
                 else:

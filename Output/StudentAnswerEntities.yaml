@@ -1,15 +1,20 @@
-notebooks:
-  value: 30
-  unit: notebooks
+smartphone_cost:
+  value: 600
+  unit: dollars
   location: input
-  grand_unit: items
-pens_more_than_notebooks:
-  value: 50
-  unit: pens
+  grand_unit: dollars
+discount_percentage:
+  value: 0.05
+  unit: null
   location: input
-  grand_unit: items
-total_items:
+  grand_unit: null
+number_of_smartphones:
+  value: 3
+  unit: smartphones
+  location: input
+  grand_unit: smartphones
+total_savings:
   value: null
-  unit: items
+  unit: dollars
   location: target
-  grand_unit: items
+  grand_unit: dollars

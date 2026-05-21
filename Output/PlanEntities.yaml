@@ -1,28 +1,51 @@
-notebooks:
-  value: 30
-  unit: notebooks
+smartphone_cost:
+  value: 600
+  unit: dollars
   location: input
-  grand_unit: items
+  grand_unit: dollars
   expr: null
   formalized_expr: null
-pens_more_than_notebooks:
-  value: 50
-  unit: pens
+discount_percentage:
+  value: 0.05
+  unit: null
   location: input
-  grand_unit: items
+  grand_unit: null
   expr: null
   formalized_expr: null
-total_items:
-  value: 110
-  unit: items
+number_of_smartphones:
+  value: 3
+  unit: smartphones
+  location: input
+  grand_unit: smartphones
+  expr: null
+  formalized_expr: null
+total_savings:
+  value: 1710
+  unit: dollars
   location: target
-  grand_unit: items
-  expr: notebooks + pens
-  formalized_expr: notebooks + (notebooks + pens_more_than_notebooks)
-pens:
-  value: 80
-  unit: pens
+  grand_unit: dollars
+  expr: total_cost_without_discount - total_discount
+  formalized_expr: smartphone_cost * number_of_smartphones - smartphone_cost * number_of_smartphones
+    * discount_percentage
+total_cost_without_discount:
+  value: 1800
+  unit: dollars
   location: step1
-  grand_unit: items
-  expr: notebooks + pens_more_than_notebooks
-  formalized_expr: notebooks + pens_more_than_notebooks
+  grand_unit: dollars
+  expr: smartphone_cost * number_of_smartphones
+  formalized_expr: smartphone_cost * number_of_smartphones
+total_discount:
+  value: 90
+  unit: dollars
+  location: step2
+  grand_unit: dollars
+  expr: smartphone_cost * number_of_smartphones * discount_percentage
+  formalized_expr: smartphone_cost * number_of_smartphones * discount_percentage
+total_cost_with_discount:
+  value: 1710
+  unit: dollars
+  location: step3
+  grand_unit: dollars
+  expr: total_cost_without_discount - total_discount
+  formalized_expr: smartphone_cost * number_of_smartphones - smartphone_cost * number_of_smartphones
+    * discount_percentage

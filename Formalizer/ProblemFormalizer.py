@@ -43,6 +43,7 @@ LOG_PATH = OUTPUT_DIR / "Log.yaml"
 
 DEFAULT_MODEL = "google/gemini-2.0-flash-001"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_MAX_RETRIES = 3
 NUMBER_TOLERANCE = 1e-9
 
 NUMBER_WORDS = {
@@ -173,22 +174,22 @@ UNIT_BASE_ALIASES = {
 }
 
 STANDARD_CONVERSION_FACTORS = [
-    ("inch", "foot", "inches_per_foot", 12),
-    ("foot", "yard", "feet_per_yard", 3),
-    ("foot", "mile", "feet_per_mile", 5280),
-    ("yard", "mile", "yards_per_mile", 1760),
-    ("millimeter", "centimeter", "millimeters_per_centimeter", 10),
-    ("centimeter", "meter", "centimeters_per_meter", 100),
-    ("meter", "kilometer", "meters_per_kilometer", 1000),
-    ("second", "minute", "seconds_per_minute", 60),
-    ("minute", "hour", "minutes_per_hour", 60),
-    ("hour", "day", "hours_per_day", 24),
-    ("day", "week", "days_per_week", 7),
-    ("month", "year", "months_per_year", 12),
-    ("cent", "dollar", "cents_per_dollar", 100),
-    ("ounce", "pound", "ounces_per_pound", 16),
-    ("pound", "ton", "pounds_per_ton", 2000),
-    ("item", "dozen", "items_per_dozen", 12),
+    ("inch", "foot", "unit_conversion_inches_per_foot", 12),
+    ("foot", "yard", "unit_conversion_feet_per_yard", 3),
+    ("foot", "mile", "unit_conversion_feet_per_mile", 5280),
+    ("yard", "mile", "unit_conversion_yards_per_mile", 1760),
+    ("millimeter", "centimeter", "unit_conversion_millimeters_per_centimeter", 10),
+    ("centimeter", "meter", "unit_conversion_centimeters_per_meter", 100),
+    ("meter", "kilometer", "unit_conversion_meters_per_kilometer", 1000),
+    ("second", "minute", "unit_conversion_seconds_per_minute", 60),
+    ("minute", "hour", "unit_conversion_minutes_per_hour", 60),
+    ("hour", "day", "unit_conversion_hours_per_day", 24),
+    ("day", "week", "unit_conversion_days_per_week", 7),
+    ("month", "year", "unit_conversion_months_per_year", 12),
+    ("cent", "dollar", "unit_conversion_cents_per_dollar", 100),
+    ("ounce", "pound", "unit_conversion_ounces_per_pound", 16),
+    ("pound", "ton", "unit_conversion_pounds_per_ton", 2000),
+    ("item", "dozen", "unit_conversion_items_per_dozen", 12),
 ]
 
 
@@ -237,6 +238,10 @@ Nhiệm vụ của bạn:
 7. Trong file này, location chỉ được là input hoặc target.
 8. Phân số, phần trăm, tỉ lệ, hệ số nhân được nói trực tiếp trong đề cũng là input scalar.
    Ví dụ: "a third" -> value 0.3333333333333333, unit rỗng; "a fourth" -> 0.25; "seven times" -> 7.
+9. Với cụm như "20% heavier", "20% more", "20% increase", chỉ trích xuất phần trăm trực tiếp là 0.2.
+   Không tự tạo multiplier 1.2 vì đó là số phải suy ra từ 1 + 0.2.
+10. Với cụm như "20% lighter", "20% less", chỉ trích xuất phần trăm trực tiếp là 0.2.
+    Không tự tạo multiplier 0.8 vì đó là số phải suy ra từ 1 - 0.2.
 
 Mỗi thực thể phải có đúng 4 trường:
 - value: giá trị số được cho trực tiếp trong đề bài. Với target, để rỗng bằng null.
@@ -256,6 +261,7 @@ Quy tắc loại bỏ:
 - Không đưa vào các số chỉ là nhãn, tên riêng, số thứ tự không tham gia bài toán.
 - Không đưa vào đại lượng được suy ra. Ví dụ đề nói có 2 cà phê mỗi ngày gồm cà phê sáng $3 và cà phê chiều $2.50, không tự tính chi phí/ngày.
 - Không đưa vào kết quả của phép tính dù phép tính rất đơn giản. Ví dụ đề nói "7 tokens" và "seven times as many" thì giữ scalar 7, không tạo entity giá trị 49.
+- Không biến phần trăm tăng/giảm thành hệ số cuối. Ví dụ "20% heavier" giữ 0.2, không tạo 1.2.
 - Nếu một số trực tiếp trong đề bị thừa và không liên quan đến lời hỏi, có thể vẫn giữ nếu nó là dữ kiện số trong đề; nhưng không được tự tính thêm.
 
 Tên biến:
@@ -309,16 +315,27 @@ total_cost:
 """.strip()
 
 
-def build_user_prompt(problem: str) -> str:
+def build_user_prompt(problem: str, previous_error: Optional[str] = None) -> str:
+    retry_note = ""
+    if previous_error:
+        retry_note = f"""
+
+Output trước bị reject vì lỗi:
+{previous_error}
+
+Hãy sinh lại YAML, chỉ dùng số được nêu trực tiếp trong đề. Không tạo số suy ra.
+""".rstrip()
+
     return f"""
 Hãy formalize đề bài sau thành YAML theo đúng quy tắc.
 
 Đề bài:
 {problem}
+{retry_note}
 """.strip()
 
 
-def call_openrouter(problem: str) -> str:
+def call_openrouter(problem: str, previous_error: Optional[str] = None) -> str:
     load_dotenv(ROOT_DIR / ".env")
     load_dotenv()
 
@@ -340,7 +357,7 @@ def call_openrouter(problem: str) -> str:
         "model": model,
         "messages": [
             {"role": "system", "content": build_system_prompt()},
-            {"role": "user", "content": build_user_prompt(problem)},
+            {"role": "user", "content": build_user_prompt(problem, previous_error=previous_error)},
         ],
         "temperature": 0,
     }
@@ -459,6 +476,117 @@ def add_standard_conversion_entities(
         }
 
     return enriched
+
+
+def looks_like_invited_friends_problem(problem: str, entities: Dict[str, Dict[str, Any]]) -> bool:
+    text = problem.lower()
+    target_names = [
+        name
+        for name, entity in entities.items()
+        if entity.get("location") == "target"
+    ]
+    target_text = " ".join(
+        f"{name} {normalize_empty(entities[name].get('unit')) or ''}"
+        for name in target_names
+    ).lower()
+
+    if "friend" not in target_text:
+        return False
+    if "invite" not in text:
+        return False
+
+    return bool(
+        re.search(
+            r"\b(?:she|he|they|we|i|[a-z]+)\s+and\s+"
+            r"(?:her|his|their|our|my)\s+friends\b",
+            text,
+        )
+    )
+
+
+def add_default_context_entities(
+    problem: str,
+    entities: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    enriched = dict(entities)
+
+    if looks_like_invited_friends_problem(problem, enriched) and "host_count" not in enriched:
+        enriched["host_count"] = {
+            "value": 1,
+            "unit": "people",
+            "location": "input",
+            "grand_unit": "people",
+        }
+
+    return enriched
+
+
+NON_COUNT_COMPONENT_BASES = {
+    "inch",
+    "foot",
+    "yard",
+    "mile",
+    "millimeter",
+    "centimeter",
+    "meter",
+    "kilometer",
+    "second",
+    "minute",
+    "hour",
+    "day",
+    "week",
+    "month",
+    "year",
+    "cent",
+    "dollar",
+    "ounce",
+    "pound",
+    "ton",
+}
+
+
+def normalize_item_target_grand_units(
+    entities: Dict[str, Dict[str, Any]]
+) -> Dict[str, Dict[str, Any]]:
+    target_units = [
+        normalize_unit_text(entity.get("unit"))
+        for entity in entities.values()
+        if entity.get("location") == "target"
+    ]
+    if not any(unit in {"item", "items"} for unit in target_units):
+        return entities
+
+    target_unit = next((unit for unit in target_units if unit in {"item", "items"}), "items")
+    normalized = dict(entities)
+
+    for name, entity in normalized.items():
+        if entity.get("location") != "input":
+            continue
+        if normalize_empty(entity.get("unit")) is None:
+            continue
+
+        unit_bases = unit_base_keys(entity.get("unit"))
+        if unit_bases & NON_COUNT_COMPONENT_BASES:
+            continue
+
+        entity = dict(entity)
+        entity["grand_unit"] = target_unit
+        normalized[name] = entity
+
+    return normalized
+
+
+def max_retries() -> int:
+    raw = os.getenv("PROBLEM_FORMALIZER_MAX_RETRIES")
+    if raw is None:
+        return DEFAULT_MAX_RETRIES
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ProblemFormalizerError("PROBLEM_FORMALIZER_MAX_RETRIES phải là số nguyên.") from exc
+    if value < 1:
+        raise ProblemFormalizerError("PROBLEM_FORMALIZER_MAX_RETRIES phải >= 1.")
+    return value
 
 
 def coerce_number(value: Any, entity_name: str) -> Optional[float | int]:
@@ -734,11 +862,31 @@ def run() -> None:
     try:
         ensure_dirs()
         problem = read_problem()
-        raw_response = call_openrouter(problem)
-        parsed_entities = parse_yaml(raw_response)
-        entities = validate_and_normalize(parsed_entities)
-        validate_values_are_direct(problem, entities)
+        previous_error: Optional[str] = None
+        last_validation_error: Optional[Exception] = None
+        entities: Optional[Dict[str, Dict[str, Any]]] = None
+
+        for _ in range(max_retries()):
+            raw_response = call_openrouter(problem, previous_error=previous_error)
+
+            try:
+                parsed_entities = parse_yaml(raw_response)
+                candidate_entities = validate_and_normalize(parsed_entities)
+                validate_values_are_direct(problem, candidate_entities)
+            except ProblemFormalizerError as exc:
+                previous_error = str(exc)
+                last_validation_error = exc
+                continue
+
+            entities = candidate_entities
+            break
+
+        if entities is None:
+            raise ProblemFormalizerError(str(last_validation_error))
+
+        entities = normalize_item_target_grand_units(entities)
         entities = add_standard_conversion_entities(entities)
+        entities = add_default_context_entities(problem, entities)
         dump_entities(entities)
         copy_entities_to_downstream_files()
         write_log("Pass ProblemFormalizer")
