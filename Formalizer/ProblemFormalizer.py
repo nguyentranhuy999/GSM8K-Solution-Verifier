@@ -113,6 +113,84 @@ MULTIPLIER_WORDS = {
     "tripled": 3,
 }
 
+UNIT_BASE_ALIASES = {
+    "inch": "inch",
+    "inches": "inch",
+    "in": "inch",
+    "foot": "foot",
+    "feet": "foot",
+    "ft": "foot",
+    "yard": "yard",
+    "yards": "yard",
+    "mile": "mile",
+    "miles": "mile",
+    "millimeter": "millimeter",
+    "millimeters": "millimeter",
+    "mm": "millimeter",
+    "centimeter": "centimeter",
+    "centimeters": "centimeter",
+    "cm": "centimeter",
+    "meter": "meter",
+    "meters": "meter",
+    "m": "meter",
+    "kilometer": "kilometer",
+    "kilometers": "kilometer",
+    "km": "kilometer",
+    "second": "second",
+    "seconds": "second",
+    "minute": "minute",
+    "minutes": "minute",
+    "hour": "hour",
+    "hours": "hour",
+    "day": "day",
+    "days": "day",
+    "week": "week",
+    "weeks": "week",
+    "month": "month",
+    "months": "month",
+    "year": "year",
+    "years": "year",
+    "cent": "cent",
+    "cents": "cent",
+    "dollar": "dollar",
+    "dollars": "dollar",
+    "usd": "dollar",
+    "ounce": "ounce",
+    "ounces": "ounce",
+    "oz": "ounce",
+    "pound": "pound",
+    "pounds": "pound",
+    "lb": "pound",
+    "lbs": "pound",
+    "ton": "ton",
+    "tons": "ton",
+    "item": "item",
+    "items": "item",
+    "piece": "item",
+    "pieces": "item",
+    "dozen": "dozen",
+    "dozens": "dozen",
+}
+
+STANDARD_CONVERSION_FACTORS = [
+    ("inch", "foot", "inches_per_foot", 12),
+    ("foot", "yard", "feet_per_yard", 3),
+    ("foot", "mile", "feet_per_mile", 5280),
+    ("yard", "mile", "yards_per_mile", 1760),
+    ("millimeter", "centimeter", "millimeters_per_centimeter", 10),
+    ("centimeter", "meter", "centimeters_per_meter", 100),
+    ("meter", "kilometer", "meters_per_kilometer", 1000),
+    ("second", "minute", "seconds_per_minute", 60),
+    ("minute", "hour", "minutes_per_hour", 60),
+    ("hour", "day", "hours_per_day", 24),
+    ("day", "week", "days_per_week", 7),
+    ("month", "year", "months_per_year", 12),
+    ("cent", "dollar", "cents_per_dollar", 100),
+    ("ounce", "pound", "ounces_per_pound", 16),
+    ("pound", "ton", "pounds_per_ton", 2000),
+    ("item", "dozen", "items_per_dozen", 12),
+]
+
 
 class ProblemFormalizerError(Exception):
     """Lỗi riêng cho ProblemFormalizer."""
@@ -312,6 +390,75 @@ def normalize_empty(value: Any) -> Any:
     if value == "" or value == "null" or value == "None":
         return None
     return value
+
+
+def normalize_unit_text(unit: Any) -> Optional[str]:
+    unit = normalize_empty(unit)
+    if unit is None:
+        return None
+    return str(unit).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def unit_base_keys(unit: Any) -> set[str]:
+    text = normalize_unit_text(unit)
+    if not text:
+        return set()
+
+    candidates = {text}
+    for prefix in ("cubic_", "cube_", "square_", "sq_"):
+        if text.startswith(prefix):
+            candidates.add(text[len(prefix):])
+
+    for suffix in ("_cubed", "_squared"):
+        if text.endswith(suffix):
+            candidates.add(text[: -len(suffix)])
+
+    if text.endswith("3"):
+        candidates.add(text[:-1])
+    if text.endswith("2"):
+        candidates.add(text[:-1])
+
+    return {
+        UNIT_BASE_ALIASES[candidate]
+        for candidate in candidates
+        if candidate in UNIT_BASE_ALIASES
+    }
+
+
+def collect_unit_bases(entities: Dict[str, Dict[str, Any]]) -> set[str]:
+    bases: set[str] = set()
+    for entity in entities.values():
+        bases.update(unit_base_keys(entity.get("unit")))
+        bases.update(unit_base_keys(entity.get("grand_unit")))
+    return bases
+
+
+def add_standard_conversion_entities(
+    entities: Dict[str, Dict[str, Any]]
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Bổ sung hằng chuyển đổi đơn vị chuẩn dưới dạng input entity.
+
+    Các hằng này không phải kết quả trung gian của đề bài; chúng là kiến thức
+    đơn vị cần có để Planner giữ expr chỉ gồm biến.
+    """
+    unit_bases = collect_unit_bases(entities)
+    enriched = dict(entities)
+
+    for smaller_unit, larger_unit, entity_name, value in STANDARD_CONVERSION_FACTORS:
+        if smaller_unit not in unit_bases or larger_unit not in unit_bases:
+            continue
+        if entity_name in enriched:
+            continue
+
+        enriched[entity_name] = {
+            "value": value,
+            "unit": None,
+            "location": "input",
+            "grand_unit": None,
+        }
+
+    return enriched
 
 
 def coerce_number(value: Any, entity_name: str) -> Optional[float | int]:
@@ -591,6 +738,7 @@ def run() -> None:
         parsed_entities = parse_yaml(raw_response)
         entities = validate_and_normalize(parsed_entities)
         validate_values_are_direct(problem, entities)
+        entities = add_standard_conversion_entities(entities)
         dump_entities(entities)
         copy_entities_to_downstream_files()
         write_log("Pass ProblemFormalizer")

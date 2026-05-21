@@ -1,25 +1,15 @@
-hundred_years:
-  value: 100
-  unit: years
+notebooks:
+  value: 30
+  unit: notebooks
   location: input
-  grand_unit: null
-three_hundred_years:
-  value: 300
-  unit: years
+  grand_unit: items
+pens_more_than_notebooks:
+  value: 50
+  unit: pens
   location: input
-  grand_unit: null
-consumed_people:
-  value: 847
-  unit: people
-  location: input
-  grand_unit: null
-ship_multiplier:
-  value: 2
-  unit: null
-  location: input
-  grand_unit: null
-people_on_first_ship:
+  grand_unit: items
+total_items:
   value: null
-  unit: people
+  unit: items
   location: target
-  grand_unit: people
+  grand_unit: items

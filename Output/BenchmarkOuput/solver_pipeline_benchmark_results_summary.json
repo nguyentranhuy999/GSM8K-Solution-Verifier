@@ -6,23 +6,24 @@
   "total_limit": 20,
   "completed_rows": 20,
   "pending_rows": 0,
-  "attempted_rows": 16,
-  "correct_rows": 13,
+  "attempted_rows": 11,
+  "correct_rows": 8,
   "wrong_rows": 3,
-  "error_rows": 4,
-  "formalizer_error_rows": 4,
-  "planner_error_rows": 0,
+  "error_rows": 9,
+  "formalizer_error_rows": 5,
+  "planner_error_rows": 4,
   "executor_error_rows": 0,
   "target_read_error_rows": 0,
   "timeout_error_rows": 0,
   "error_stage_counts": {
-    "ProblemFormalizer": 4
+    "Planner": 4,
+    "ProblemFormalizer": 5
   },
-  "accuracy": 0.8125,
-  "accuracy_percent": 81.25,
-  "accuracy_attempted": 0.8125,
-  "accuracy_attempted_percent": 81.25,
-  "accuracy_completed": 0.65,
-  "accuracy_completed_percent": 65.0,
-  "updated_at": "2026-05-21T03:15:42"
+  "accuracy": 0.7272727272727273,
+  "accuracy_percent": 72.7273,
+  "accuracy_attempted": 0.7272727272727273,
+  "accuracy_attempted_percent": 72.7273,
+  "accuracy_completed": 0.4,
+  "accuracy_completed_percent": 40.0,
+  "updated_at": "2026-05-21T14:21:09"
 }

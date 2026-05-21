@@ -171,7 +171,7 @@ Nhiệm vụ:
 - Không thực hiện giải thích, chỉ trả YAML thuần.
 
 Mỗi bước có đúng 4 trường:
-- expr: biểu thức tính toán symbolic, dùng tên entity. Ví dụ: morning_coffee_price + afternoon_coffee_price
+- expr: biểu thức tính toán symbolic, chỉ dùng tên entity/result. Ví dụ: morning_coffee_price + afternoon_coffee_price
 - result: tên entity được tạo ra bởi bước đó.
 - result_unit: đơn vị của result. Với scalar có thể để rỗng/null.
 - result_grand_unit: grand unit của result theo target. Với scalar có thể để rỗng/null.
@@ -180,23 +180,34 @@ Quy tắc step:
 - Tên bước phải là step1, step2, step3, ... liên tục, không bỏ số.
 - step sau được dùng result của step trước.
 - result phải là snake_case.
-- expr chỉ nên dùng tên entity, số hằng cần thiết, và toán tử đơn giản: +, -, *, /, parentheses.
-- Nếu cần đổi đơn vị, hãy tạo một step riêng. Ví dụ: hours * 60 -> minutes.
-- Với bước đổi đơn vị, expr vẫn phải thể hiện phép đổi đơn vị rõ ràng.
+- expr chỉ được dùng tên entity/result đã có và toán tử đơn giản: +, -, *, /, parentheses.
+- Tuyệt đối không viết số literal trong expr, kể cả 0, 1, 2, 36, 60, 0.5, 1/3, hay số mũ như ** 2.
+- Nếu một hệ số là dữ kiện trong đề, hệ số đó phải là entity input trong ProblemEntities.
+- Nếu cần hệ số trung gian như 1, hãy tạo từ entity đã có. Ví dụ: identity_multiplier = growth_multiplier / growth_multiplier.
+- Nếu cần đổi đơn vị, chỉ dùng đúng tên conversion factor đã có trong ProblemEntities, ví dụ inches_per_foot.
+- Không tự đặt tên chung chung như conversion_factor nếu tên đó không tồn tại trong ProblemEntities.
 
 Quy tắc không ảo giác:
 - Chỉ dùng entity trong ProblemEntities hoặc result của step trước.
 - Không tạo bước không cần thiết.
 - Không đưa value vào Plan.yaml.
-- Không tính toán ra số trong Plan.yaml.
+- Không tính toán ra số trong Plan.yaml và không đưa số literal vào expr.
 - Không nhân đôi dữ kiện đếm nếu các thành phần đã được liệt kê đầy đủ.
   Ví dụ: "Nancy buys 2 coffees a day", rồi đề cho giá morning coffee và afternoon coffee.
   Khi đó daily cost là morning_coffee_price + afternoon_coffee_price, KHÔNG nhân thêm coffees_per_day.
   Chỉ dùng entity đếm như coffees_per_day nếu đề cho giá của một item đơn lẻ mà chưa liệt kê từng item.
+- Entity có tên dạng x_more_than_y, x_less_than_y, x_fewer_than_y là độ chênh lệch, không phải số lượng thật của x.
+  Nếu cần tổng gồm cả x và y, phải tạo x trước rồi mới cộng tổng.
+  Ví dụ pens_more_than_notebooks không phải số pens.
+  Đúng: pens = notebooks + pens_more_than_notebooks, sau đó total_items = notebooks + pens.
+  Sai: total_items = notebooks + pens_more_than_notebooks.
 - Với chuỗi tăng/giảm theo hệ số như "each new X has r times as many as the last":
   nếu biết tổng nhiều kỳ và cần tìm kỳ đầu, dùng tổng cấp số nhân.
-  Ví dụ có n kỳ, hệ số r, kỳ đầu là first thì total = first * (1 + r + ... + r ** (n - 1)).
-  Không được lấy total / n rồi nhân/chia với r; đó là trung bình, không phải kỳ đầu.
+  Không được viết hằng 1 hoặc số mũ literal trực tiếp trong expr.
+  Hãy tạo hệ số đầu bằng identity_multiplier = growth_multiplier / growth_multiplier.
+  Hệ số kỳ sau tạo bằng phép nhân entity/result, ví dụ third_multiplier = growth_multiplier * growth_multiplier.
+  Sau đó cộng các multiplier đã tạo để chia tổng.
+  Không được lấy total / count rồi nhân/chia với growth_multiplier; đó là trung bình, không phải kỳ đầu.
 
 Quy tắc đơn vị:
 - result_unit là đơn vị trực tiếp của result.
@@ -325,9 +336,111 @@ def parse_plan(text: str) -> Dict[str, Any]:
     return parsed
 
 
+NUMERIC_LITERAL_RE = re.compile(
+    r"(?<![A-Za-z0-9_])[-+]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][-+]?\d+)?(?![A-Za-z0-9_])"
+)
+
+RELATIVE_DIFFERENCE_MARKERS = {
+    "_more_than_": "+",
+    "_greater_than_": "+",
+    "_less_than_": "-",
+    "_fewer_than_": "-",
+}
+
+
 def extract_expr_tokens(expr: str) -> List[str]:
     """Lấy các token giống tên biến trong expr."""
     return re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", expr)
+
+
+def extract_numeric_literals(expr: str) -> List[str]:
+    """Lấy các số literal trong expr, bỏ qua chữ số nằm trong tên entity."""
+    return [match.group(0) for match in NUMERIC_LITERAL_RE.finditer(expr)]
+
+
+def validate_no_numeric_literals_in_expr(step_name: str, expr: str) -> None:
+    numeric_literals = extract_numeric_literals(expr)
+    if numeric_literals:
+        raise PlannerError(
+            f"{step_name}.expr không được chứa số literal {numeric_literals}; "
+            "expr chỉ được dùng entity/result và toán tử. "
+            "Nếu cần hệ số 1, hãy tạo identity từ entity đã có, ví dụ multiplier / multiplier."
+        )
+
+
+def parse_relative_difference_entity_name(name: str) -> Optional[Tuple[str, str, str]]:
+    for marker, operator_symbol in RELATIVE_DIFFERENCE_MARKERS.items():
+        if marker not in name:
+            continue
+        left_name, right_name = name.split(marker, 1)
+        if left_name and right_name:
+            return left_name, right_name, operator_symbol
+    return None
+
+
+def singularize_token(token: str) -> str:
+    if token.endswith("ies") and len(token) > 3:
+        return f"{token[:-3]}y"
+    if token.endswith("es") and len(token) > 2:
+        return token[:-2]
+    if token.endswith("s") and len(token) > 1:
+        return token[:-1]
+    return token
+
+
+def entity_name_terms(name: str) -> set[str]:
+    terms = {term for term in name.split("_") if term}
+    terms.update(singularize_token(term) for term in terms)
+    return terms
+
+
+def result_name_mentions_quantity(result_name: str, quantity_name: str) -> bool:
+    if result_name == quantity_name:
+        return True
+
+    quantity_terms = entity_name_terms(quantity_name)
+    result_terms = entity_name_terms(result_name)
+    return bool(quantity_terms) and quantity_terms.issubset(result_terms)
+
+
+def validate_relative_difference_entities_resolved(
+    plan: Dict[str, Dict[str, Any]],
+    problem_entities: Dict[str, Dict[str, Any]],
+) -> None:
+    """
+    Bắt lỗi dùng "x more than y" như số lượng thật của x.
+
+    Entity pens_more_than_notebooks biểu diễn offset 50, không phải 50 pens.
+    Plan phải có bước tạo pens trước khi dùng pens trong tổng.
+    """
+    for step_name, step in plan.items():
+        expr = step["expr"]
+        result = step["result"]
+        tokens = extract_expr_tokens(expr)
+
+        for token in tokens:
+            if token not in problem_entities:
+                continue
+
+            parsed = parse_relative_difference_entity_name(token)
+            if not parsed:
+                continue
+
+            compared_quantity, reference_quantity, operator_symbol = parsed
+            if result_name_mentions_quantity(result, compared_quantity):
+                if operator_symbol not in expr:
+                    raise PlannerError(
+                        f"{step_name}.expr dùng {token!r} nhưng thiếu phép {operator_symbol!r} "
+                        f"để tạo số lượng thật {compared_quantity!r} so với {reference_quantity!r}."
+                    )
+                continue
+
+            raise PlannerError(
+                f"{step_name}.expr dùng {token!r} như một số lượng thật. "
+                f"{token!r} là độ chênh lệch, nên phải tạo entity {compared_quantity!r} trước: "
+                f"{compared_quantity} = {reference_quantity} {operator_symbol} {token}. "
+                f"Sau đó mới dùng {compared_quantity!r} để tính {result!r}."
+            )
 
 
 def is_money_unit(unit: Any) -> bool:
@@ -509,6 +622,8 @@ def validate_and_normalize_plan(
         if "=" in step["expr"]:
             raise PlannerError(f"{step_name}.expr không được chứa dấu '='; expr phải là biểu thức tính toán.")
 
+        validate_no_numeric_literals_in_expr(step_name, step["expr"])
+
         expr_tokens = extract_expr_tokens(step["expr"])
         unknown_tokens = [token for token in expr_tokens if token not in available_entities]
         if unknown_tokens:
@@ -550,6 +665,7 @@ def validate_and_normalize_plan(
 
     validate_no_obvious_double_count(normalized_plan, problem_entities)
     validate_important_scalar_inputs_used(normalized_plan, problem_entities)
+    validate_relative_difference_entities_resolved(normalized_plan, problem_entities)
 
     return normalized_plan
 

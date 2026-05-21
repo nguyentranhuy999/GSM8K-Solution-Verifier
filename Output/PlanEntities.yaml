@@ -1,35 +1,28 @@
-hundred_years:
-  value: 100
-  unit: years
+notebooks:
+  value: 30
+  unit: notebooks
   location: input
-  grand_unit: null
+  grand_unit: items
   expr: null
   formalized_expr: null
-three_hundred_years:
-  value: 300
-  unit: years
+pens_more_than_notebooks:
+  value: 50
+  unit: pens
   location: input
-  grand_unit: null
+  grand_unit: items
   expr: null
   formalized_expr: null
-consumed_people:
-  value: 847
-  unit: people
-  location: input
-  grand_unit: null
-  expr: null
-  formalized_expr: null
-ship_multiplier:
-  value: 2
-  unit: null
-  location: input
-  grand_unit: null
-  expr: null
-  formalized_expr: null
-people_on_first_ship:
-  value: 121
-  unit: people
+total_items:
+  value: 110
+  unit: items
   location: target
-  grand_unit: people
-  expr: consumed_people / (1 + ship_multiplier + ship_multiplier ** 2)
-  formalized_expr: consumed_people / (1 + ship_multiplier + ship_multiplier ** 2)
+  grand_unit: items
+  expr: notebooks + pens
+  formalized_expr: notebooks + (notebooks + pens_more_than_notebooks)
+pens:
+  value: 80
+  unit: pens
+  location: step1
+  grand_unit: items
+  expr: notebooks + pens_more_than_notebooks
+  formalized_expr: notebooks + pens_more_than_notebooks
