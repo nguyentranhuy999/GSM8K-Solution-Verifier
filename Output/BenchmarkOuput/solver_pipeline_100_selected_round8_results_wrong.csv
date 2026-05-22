@@ -1,0 +1,1 @@
+index,question,official_answer,target_entity,pipeline_answer,correct,solver_stdout,solver_stderr,problem_entities_yaml,plan_yaml,plan_entities_yaml,error_stage,error,duration_seconds

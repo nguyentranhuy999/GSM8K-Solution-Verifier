@@ -135,6 +135,45 @@ def official_answer_column(fieldnames: list[str]) -> str:
     raise ValueError(f"Missing official answer column. Found: {fieldnames}")
 
 
+def final_answer_from_response(row: dict[str, str]) -> Optional[str]:
+    response = row.get("offical response") or row.get("official response") or ""
+    if not response:
+        return None
+
+    matches = re.findall(
+        r"(?:final answer is|answer is|therefore[^.\n]*?)(?:[^-0-9]*)(-?\d[\d,]*(?:\.\d+)?)",
+        response,
+        flags=re.IGNORECASE,
+    )
+    if not matches:
+        return None
+    return matches[-1]
+
+
+def official_answer_for_row(row: dict[str, str], answer_column: str) -> str:
+    answer = row[answer_column]
+    response_answer = final_answer_from_response(row)
+    if response_answer is None:
+        return answer
+
+    answer_number = decimal_from_text(answer)
+    response_number = decimal_from_text(response_answer)
+    if answer_number is None or response_number is None:
+        return answer
+
+    answer_digits = re.sub(r"\D", "", answer)
+    response_digits = re.sub(r"\D", "", response_answer)
+    if (
+        answer_digits
+        and response_digits.startswith(answer_digits)
+        and response_number != answer_number
+        and abs(response_number) > abs(answer_number)
+    ):
+        return response_answer
+
+    return answer
+
+
 def read_benchmark_rows(input_path: Path, limit: Optional[int]) -> tuple[list[dict[str, str]], str]:
     with input_path.open(newline="", encoding="utf-8-sig") as file:
         reader = csv.DictReader(file)
@@ -149,6 +188,24 @@ def read_benchmark_rows(input_path: Path, limit: Optional[int]) -> tuple[list[di
         rows = rows[:limit]
 
     return rows, answer_column
+
+
+def parse_indices(raw_indices: str) -> set[int]:
+    selected: set[int] = set()
+    for chunk in raw_indices.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if "-" in chunk:
+            start_text, end_text = chunk.split("-", 1)
+            start = int(start_text)
+            end = int(end_text)
+            if start > end:
+                raise ValueError(f"Invalid index range: {chunk}")
+            selected.update(range(start, end + 1))
+            continue
+        selected.add(int(chunk))
+    return selected
 
 
 def read_existing_results(output_path: Path) -> dict[int, dict[str, str]]:
@@ -367,7 +424,7 @@ def run_one_row(
     isolated: bool,
 ) -> dict[str, Any]:
     question = row["question"].strip()
-    official_answer = row[answer_column]
+    official_answer = official_answer_for_row(row, answer_column)
     start_time = time.monotonic()
     result_row: dict[str, Any] = {
         "index": index,
@@ -465,6 +522,19 @@ def run_benchmark(args: argparse.Namespace) -> None:
     input_path = normalize_path(args.input)
     output_path = normalize_path(args.output)
     rows, answer_column = read_benchmark_rows(input_path, args.limit)
+    indexed_rows = [
+        (zero_based_index + 1, row)
+        for zero_based_index, row in enumerate(rows)
+    ]
+
+    selected_indices: Optional[set[int]] = None
+    if args.indices:
+        selected_indices = parse_indices(args.indices)
+        indexed_rows = [
+            (index, row)
+            for index, row in indexed_rows
+            if index in selected_indices
+        ]
 
     existing = read_existing_results(output_path) if args.resume else {}
     results = [existing[index] for index in sorted(existing)]
@@ -474,9 +544,9 @@ def run_benchmark(args: argparse.Namespace) -> None:
         if str(row.get("index", "")).isdigit()
     }
     pending_rows = [
-        (zero_based_index + 1, row)
-        for zero_based_index, row in enumerate(rows)
-        if zero_based_index + 1 not in completed
+        (index, row)
+        for index, row in indexed_rows
+        if index not in completed
     ]
 
     original_problem = PROBLEM_PATH.read_text(encoding="utf-8") if PROBLEM_PATH.exists() else None
@@ -485,6 +555,8 @@ def run_benchmark(args: argparse.Namespace) -> None:
     print(f"Output: {output_path}")
     print(f"Answer column: {answer_column}")
     print(f"Limit: {len(rows)}")
+    if selected_indices is not None:
+        print(f"Selected indices: {sorted(selected_indices)}")
     print(f"Pending rows: {len(pending_rows)}")
     print(f"Timeout per row: {args.timeout}s")
     print(f"Workers: {args.workers}")
@@ -582,6 +654,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", default=str(DEFAULT_INPUT), help="Benchmark CSV path.")
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT), help="Result CSV path.")
     parser.add_argument("--limit", type=int, default=20, help="Number of rows to run.")
+    parser.add_argument(
+        "--indices",
+        default="",
+        help="Optional 1-based row indices or ranges to run, e.g. '1,6,21-23'.",
+    )
     parser.add_argument("--timeout", type=int, default=300, help="Timeout seconds per row.")
     parser.add_argument("--sleep", type=float, default=0.0, help="Sleep between rows.")
     parser.add_argument(

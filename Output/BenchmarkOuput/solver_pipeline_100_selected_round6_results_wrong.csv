@@ -1,0 +1,325 @@
+index,question,official_answer,target_entity,pipeline_answer,correct,solver_stdout,solver_stderr,problem_entities_yaml,plan_yaml,plan_entities_yaml,error_stage,error,duration_seconds
+38,"Dorothy is 15 years old and wants to go to a museum with her family. Her family consists of her, her younger brother, her parents, and her grandfather. The regular ticket cost is $10. People 18 years old or younger have a discount of 30%. How much money will Dorothy have after this trip, when she currently has $70?",26,,,no,"Fail ProblemFormalizer
+Running ProblemFormalizer...",Reason: younger_brother_age.value=0 không phải số được nêu trực tiếp trong đề.,"telegraph_road_length:
+  value: 162
+  unit: kilometers
+  location: input
+  grand_unit: kilometers
+pardee_road_length:
+  value: 12000
+  unit: meters
+  location: input
+  grand_unit: meters
+length_difference:
+  value: null
+  unit: kilometers
+  location: target
+  grand_unit: kilometers
+unit_conversion_meters_per_kilometer:
+  value: 1000
+  unit: null
+  location: input
+  grand_unit: null","step1:
+  expr: pardee_road_length / unit_conversion_meters_per_kilometer
+  result: pardee_road_length_kilometers
+  result_unit: kilometers
+  result_grand_unit: kilometers
+  reported_expr: 12000 / 1000 = 12
+step2:
+  expr: telegraph_road_length - pardee_road_length_kilometers
+  result: length_difference
+  result_unit: kilometers
+  result_grand_unit: kilometers
+  reported_expr: 162 - 12 = 150","telegraph_road_length:
+  value: 162
+  unit: kilometers
+  location: input
+  grand_unit: kilometers
+  expr: null
+  formalized_expr: null
+pardee_road_length:
+  value: 12000
+  unit: meters
+  location: input
+  grand_unit: meters
+  expr: null
+  formalized_expr: null
+length_difference:
+  value: 150
+  unit: kilometers
+  location: target
+  grand_unit: kilometers
+  expr: telegraph_road_length - pardee_road_length_kilometers
+  formalized_expr: telegraph_road_length - pardee_road_length / unit_conversion_meters_per_kilometer
+unit_conversion_meters_per_kilometer:
+  value: 1000
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+pardee_road_length_kilometers:
+  value: 12
+  unit: kilometers
+  location: step1
+  grand_unit: kilometers
+  expr: pardee_road_length / unit_conversion_meters_per_kilometer
+  formalized_expr: pardee_road_length / unit_conversion_meters_per_kilometer",ProblemFormalizer,RuntimeError: Solver failed with exit code 1,24.059
+59,"Out of the 200 Grade 5 students, 2/5 are boys and 2/3 of the girls are in the girl scout. How many girls are not in the girl scout?",40,,,no,"Fail ProblemFormalizer
+Running ProblemFormalizer...",Reason: girls_fraction.value=0.6 không phải số được nêu trực tiếp trong đề.,"telegraph_road_length:
+  value: 162
+  unit: kilometers
+  location: input
+  grand_unit: kilometers
+pardee_road_length:
+  value: 12000
+  unit: meters
+  location: input
+  grand_unit: meters
+length_difference:
+  value: null
+  unit: kilometers
+  location: target
+  grand_unit: kilometers
+unit_conversion_meters_per_kilometer:
+  value: 1000
+  unit: null
+  location: input
+  grand_unit: null","step1:
+  expr: pardee_road_length / unit_conversion_meters_per_kilometer
+  result: pardee_road_length_kilometers
+  result_unit: kilometers
+  result_grand_unit: kilometers
+  reported_expr: 12000 / 1000 = 12
+step2:
+  expr: telegraph_road_length - pardee_road_length_kilometers
+  result: length_difference
+  result_unit: kilometers
+  result_grand_unit: kilometers
+  reported_expr: 162 - 12 = 150","telegraph_road_length:
+  value: 162
+  unit: kilometers
+  location: input
+  grand_unit: kilometers
+  expr: null
+  formalized_expr: null
+pardee_road_length:
+  value: 12000
+  unit: meters
+  location: input
+  grand_unit: meters
+  expr: null
+  formalized_expr: null
+length_difference:
+  value: 150
+  unit: kilometers
+  location: target
+  grand_unit: kilometers
+  expr: telegraph_road_length - pardee_road_length_kilometers
+  formalized_expr: telegraph_road_length - pardee_road_length / unit_conversion_meters_per_kilometer
+unit_conversion_meters_per_kilometer:
+  value: 1000
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+pardee_road_length_kilometers:
+  value: 12
+  unit: kilometers
+  location: step1
+  grand_unit: kilometers
+  expr: pardee_road_length / unit_conversion_meters_per_kilometer
+  formalized_expr: pardee_road_length / unit_conversion_meters_per_kilometer",ProblemFormalizer,RuntimeError: Solver failed with exit code 1,23.497
+92,"Jill runs a business breeding llamas. Nine of her llamas got pregnant with 1 calf, and 5 of them got pregnant with twins. After they give birth, Jill traded 8 of the calves for 2 new adult llamas. Then she sells 1/3 of her herd at the market. How many total llamas  (calves and adults) does Jill have now?",18,total_llamas,8.666666666666668,no,"Pass ProblemFormalizer
+Pass Planner
+Pass Executor
+Running ProblemFormalizer...
+Running Planner...
+Running Executor...
+Pass Solver",,"jill_llamas_pregnant_with_calves:
+  value: 9
+  unit: llamas
+  location: input
+  grand_unit: llamas
+calves_from_pregnant_llamas:
+  value: 1
+  unit: calves
+  location: input
+  grand_unit: calves
+jill_llamas_pregnant_with_twins:
+  value: 5
+  unit: llamas
+  location: input
+  grand_unit: llamas
+twins_count:
+  value: 2
+  unit: null
+  location: input
+  grand_unit: null
+calves_traded:
+  value: 8
+  unit: calves
+  location: input
+  grand_unit: calves
+new_adult_llamas:
+  value: 2
+  unit: llamas
+  location: input
+  grand_unit: llamas
+fraction_sold_at_market:
+  value: 0.3333333333333333
+  unit: null
+  location: input
+  grand_unit: null
+total_llamas:
+  value: null
+  unit: llamas
+  location: target
+  grand_unit: llamas","step1:
+  expr: jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+  result: total_calves_from_single_pregnancy
+  result_unit: calves
+  result_grand_unit: calves
+  reported_expr: 9 * 1 = 9
+step2:
+  expr: jill_llamas_pregnant_with_twins * twins_count
+  result: total_calves_from_twins
+  result_unit: calves
+  result_grand_unit: calves
+  reported_expr: 5 * 2 = 10
+step3:
+  expr: total_calves_from_single_pregnancy + total_calves_from_twins
+  result: total_calves
+  result_unit: calves
+  result_grand_unit: calves
+  reported_expr: 9 + 10 = 19
+step4:
+  expr: total_calves - calves_traded
+  result: remaining_calves
+  result_unit: calves
+  result_grand_unit: calves
+  reported_expr: 19 - 8 = 11
+step5:
+  expr: remaining_calves + new_adult_llamas
+  result: total_llamas_after_trade
+  result_unit: llamas
+  result_grand_unit: llamas
+  reported_expr: 11 + 2 = 13
+step6:
+  expr: total_llamas_after_trade * fraction_sold_at_market
+  result: llamas_sold_at_market
+  result_unit: llamas
+  result_grand_unit: llamas
+  reported_expr: 13.0000000000000000 * 0.3333333333333333 = 4.3333333333333329
+step7:
+  expr: total_llamas_after_trade - llamas_sold_at_market
+  result: total_llamas
+  result_unit: llamas
+  result_grand_unit: llamas
+  reported_expr: 13.000000000000000 - 4.333333333333333 = 8.666666666666667","jill_llamas_pregnant_with_calves:
+  value: 9
+  unit: llamas
+  location: input
+  grand_unit: llamas
+  expr: null
+  formalized_expr: null
+calves_from_pregnant_llamas:
+  value: 1
+  unit: calves
+  location: input
+  grand_unit: calves
+  expr: null
+  formalized_expr: null
+jill_llamas_pregnant_with_twins:
+  value: 5
+  unit: llamas
+  location: input
+  grand_unit: llamas
+  expr: null
+  formalized_expr: null
+twins_count:
+  value: 2
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+calves_traded:
+  value: 8
+  unit: calves
+  location: input
+  grand_unit: calves
+  expr: null
+  formalized_expr: null
+new_adult_llamas:
+  value: 2
+  unit: llamas
+  location: input
+  grand_unit: llamas
+  expr: null
+  formalized_expr: null
+fraction_sold_at_market:
+  value: 0.3333333333333333
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+total_llamas:
+  value: 8.666666666666668
+  unit: llamas
+  location: target
+  grand_unit: llamas
+  expr: total_llamas_after_trade - llamas_sold_at_market
+  formalized_expr: (((jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+    + jill_llamas_pregnant_with_twins * twins_count) - calves_traded) + new_adult_llamas)
+    - ((((jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas + jill_llamas_pregnant_with_twins
+    * twins_count) - calves_traded) + new_adult_llamas) * fraction_sold_at_market)
+total_calves_from_single_pregnancy:
+  value: 9
+  unit: calves
+  location: step1
+  grand_unit: calves
+  expr: jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+  formalized_expr: jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+total_calves_from_twins:
+  value: 10
+  unit: calves
+  location: step2
+  grand_unit: calves
+  expr: jill_llamas_pregnant_with_twins * twins_count
+  formalized_expr: jill_llamas_pregnant_with_twins * twins_count
+total_calves:
+  value: 19
+  unit: calves
+  location: step3
+  grand_unit: calves
+  expr: total_calves_from_single_pregnancy + total_calves_from_twins
+  formalized_expr: jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+    + jill_llamas_pregnant_with_twins * twins_count
+remaining_calves:
+  value: 11
+  unit: calves
+  location: step4
+  grand_unit: calves
+  expr: total_calves - calves_traded
+  formalized_expr: (jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+    + jill_llamas_pregnant_with_twins * twins_count) - calves_traded
+total_llamas_after_trade:
+  value: 13
+  unit: llamas
+  location: step5
+  grand_unit: llamas
+  expr: remaining_calves + new_adult_llamas
+  formalized_expr: ((jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+    + jill_llamas_pregnant_with_twins * twins_count) - calves_traded) + new_adult_llamas
+llamas_sold_at_market:
+  value: 4.333333333333333
+  unit: llamas
+  location: step6
+  grand_unit: llamas
+  expr: total_llamas_after_trade * fraction_sold_at_market
+  formalized_expr: (((jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+    + jill_llamas_pregnant_with_twins * twins_count) - calves_traded) + new_adult_llamas)
+    * fraction_sold_at_market",,,34.671

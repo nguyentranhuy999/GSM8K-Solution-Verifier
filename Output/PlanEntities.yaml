@@ -1,49 +1,106 @@
-tomatoes_harvested:
-  value: 200
-  unit: tomatoes
+pieces_of_hundred_bills:
+  value: 2
+  unit: pieces
   location: input
-  grand_unit: tomatoes
+  grand_unit: pieces
   expr: null
   formalized_expr: null
-carrots_harvested:
-  value: 350
-  unit: carrots
-  location: input
-  grand_unit: carrots
-  expr: null
-  formalized_expr: null
-tomato_price:
-  value: 1.0
+hundred_bill_value:
+  value: 100
   unit: dollars
   location: input
   grand_unit: dollars
   expr: null
   formalized_expr: null
-carrot_price:
-  value: 1.5
+fifty_bill_value:
+  value: 50
   unit: dollars
   location: input
   grand_unit: dollars
   expr: null
   formalized_expr: null
-total_money:
-  value: 725
+ten_bill_value:
+  value: 10
   unit: dollars
+  location: input
+  grand_unit: dollars
+  expr: null
+  formalized_expr: null
+five_bill_value:
+  value: 5
+  unit: dollars
+  location: input
+  grand_unit: dollars
+  expr: null
+  formalized_expr: null
+half_fraction:
+  value: 0.5
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+total_pieces_of_bills:
+  value: 24.5
+  unit: pieces
   location: target
-  grand_unit: dollars
-  expr: total_tomato_money + total_carrot_money
-  formalized_expr: tomatoes_harvested * tomato_price + carrots_harvested * carrot_price
-total_tomato_money:
+  grand_unit: pieces
+  expr: pieces_of_hundred_bills + ten_bills + five_bills
+  formalized_expr: pieces_of_hundred_bills + (((pieces_of_hundred_bills * hundred_bill_value
+    - fifty_bill_value) * half_fraction) / ten_bill_value) + ((pieces_of_hundred_bills
+    * hundred_bill_value - fifty_bill_value) - ((pieces_of_hundred_bills * hundred_bill_value
+    - fifty_bill_value) * half_fraction) / five_bill_value)
+identity_multiplier:
+  value: 1
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+total_hundred_dollars:
   value: 200
   unit: dollars
   location: step1
   grand_unit: dollars
-  expr: tomatoes_harvested * tomato_price
-  formalized_expr: tomatoes_harvested * tomato_price
-total_carrot_money:
-  value: 525
+  expr: pieces_of_hundred_bills * hundred_bill_value
+  formalized_expr: pieces_of_hundred_bills * hundred_bill_value
+remaining_hundred_dollars:
+  value: 150
   unit: dollars
   location: step2
   grand_unit: dollars
-  expr: carrots_harvested * carrot_price
-  formalized_expr: carrots_harvested * carrot_price
+  expr: total_hundred_dollars - fifty_bill_value
+  formalized_expr: pieces_of_hundred_bills * hundred_bill_value - fifty_bill_value
+half_remaining_hundred_dollars:
+  value: 75
+  unit: dollars
+  location: step3
+  grand_unit: dollars
+  expr: remaining_hundred_dollars * half_fraction
+  formalized_expr: (pieces_of_hundred_bills * hundred_bill_value - fifty_bill_value)
+    * half_fraction
+ten_bills:
+  value: 7.5
+  unit: pieces
+  location: step4
+  grand_unit: pieces
+  expr: half_remaining_hundred_dollars / ten_bill_value
+  formalized_expr: ((pieces_of_hundred_bills * hundred_bill_value - fifty_bill_value)
+    * half_fraction) / ten_bill_value
+remaining_after_half:
+  value: 75
+  unit: dollars
+  location: step5
+  grand_unit: dollars
+  expr: remaining_hundred_dollars - half_remaining_hundred_dollars
+  formalized_expr: (pieces_of_hundred_bills * hundred_bill_value - fifty_bill_value)
+    - ((pieces_of_hundred_bills * hundred_bill_value - fifty_bill_value) * half_fraction)
+five_bills:
+  value: 15
+  unit: pieces
+  location: step6
+  grand_unit: pieces
+  expr: remaining_after_half / five_bill_value
+  formalized_expr: (pieces_of_hundred_bills * hundred_bill_value - fifty_bill_value)
+    - ((pieces_of_hundred_bills * hundred_bill_value - fifty_bill_value) * half_fraction)
+    / five_bill_value

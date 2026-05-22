@@ -1,25 +1,40 @@
-tomatoes_harvested:
-  value: 200
-  unit: tomatoes
+pieces_of_hundred_bills:
+  value: 2
+  unit: pieces
   location: input
-  grand_unit: tomatoes
-carrots_harvested:
-  value: 350
-  unit: carrots
-  location: input
-  grand_unit: carrots
-tomato_price:
-  value: 1.0
+  grand_unit: pieces
+hundred_bill_value:
+  value: 100
   unit: dollars
   location: input
   grand_unit: dollars
-carrot_price:
-  value: 1.5
+fifty_bill_value:
+  value: 50
   unit: dollars
   location: input
   grand_unit: dollars
-total_money:
+ten_bill_value:
+  value: 10
+  unit: dollars
+  location: input
+  grand_unit: dollars
+five_bill_value:
+  value: 5
+  unit: dollars
+  location: input
+  grand_unit: dollars
+half_fraction:
+  value: 0.5
+  unit: null
+  location: input
+  grand_unit: null
+total_pieces_of_bills:
   value: null
-  unit: dollars
+  unit: pieces
   location: target
-  grand_unit: dollars
+  grand_unit: pieces
+identity_multiplier:
+  value: 1
+  unit: null
+  location: input
+  grand_unit: null

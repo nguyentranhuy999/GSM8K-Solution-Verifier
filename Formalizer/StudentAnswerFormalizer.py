@@ -68,6 +68,7 @@ LOG_PATH = OUTPUT_DIR / "Log.yaml"
 
 DEFAULT_MODEL = "google/gemini-2.0-flash-001"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_MAX_TOKENS = 4096
 DEFAULT_MAX_RETRIES = 3
 
 
@@ -313,6 +314,7 @@ def call_openrouter(
             },
         ],
         "temperature": 0,
+        "max_tokens": int(os.getenv("OPENROUTER_MAX_TOKENS", DEFAULT_MAX_TOKENS)),
     }
 
     try:

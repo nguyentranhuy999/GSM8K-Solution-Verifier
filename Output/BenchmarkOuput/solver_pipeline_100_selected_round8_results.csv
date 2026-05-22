@@ -1,0 +1,451 @@
+index,question,official_answer,target_entity,pipeline_answer,correct,solver_stdout,solver_stderr,problem_entities_yaml,plan_yaml,plan_entities_yaml,error_stage,error,duration_seconds
+38,"Dorothy is 15 years old and wants to go to a museum with her family. Her family consists of her, her younger brother, her parents, and her grandfather. The regular ticket cost is $10. People 18 years old or younger have a discount of 30%. How much money will Dorothy have after this trip, when she currently has $70?",26,total_money_after_trip,26,yes,"Pass ProblemFormalizer
+Pass Planner
+Pass Executor
+Running ProblemFormalizer...
+Running Planner...
+Running Executor...
+Pass Solver",,"dorothy_age:
+  value: 15
+  unit: years
+  location: input
+  grand_unit: null
+younger_brother_age_limit:
+  value: 18
+  unit: years
+  location: input
+  grand_unit: null
+regular_ticket_cost:
+  value: 10
+  unit: dollars
+  location: input
+  grand_unit: dollars
+discount_percentage:
+  value: 0.3
+  unit: null
+  location: input
+  grand_unit: null
+current_money:
+  value: 70
+  unit: dollars
+  location: input
+  grand_unit: dollars
+total_money_after_trip:
+  value: null
+  unit: dollars
+  location: target
+  grand_unit: dollars
+identity_multiplier:
+  value: 1
+  unit: null
+  location: input
+  grand_unit: null
+self_count:
+  value: 1
+  unit: people
+  location: input
+  grand_unit: people
+sibling_count:
+  value: 1
+  unit: people
+  location: input
+  grand_unit: people
+parents_count:
+  value: 2
+  unit: people
+  location: input
+  grand_unit: people
+grandparents_count:
+  value: 1
+  unit: people
+  location: input
+  grand_unit: people","step1:
+  expr: self_count + sibling_count + parents_count + grandparents_count
+  result: total_people
+  result_unit: people
+  result_grand_unit: people
+  reported_expr: 1 + 1 + 2 + 1 = 5
+step2:
+  expr: total_people * regular_ticket_cost
+  result: total_ticket_cost
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 5 * 10 = 50
+step3:
+  expr: self_count + sibling_count
+  result: discounted_count
+  result_unit: people
+  result_grand_unit: people
+  reported_expr: 1 + 1 = 2
+step4:
+  expr: discounted_count * regular_ticket_cost * (identity_multiplier - discount_percentage)
+  result: total_discounted_cost
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 2.0 * 10.0 * (1.0 - 0.3) = 14.0
+step5:
+  expr: total_people - discounted_count
+  result: regular_count
+  result_unit: people
+  result_grand_unit: people
+  reported_expr: 5 - 2 = 3
+step6:
+  expr: regular_count * regular_ticket_cost
+  result: total_regular_cost
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 3 * 10 = 30
+step7:
+  expr: total_discounted_cost + total_regular_cost
+  result: total_cost
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 14 + 30 = 44
+step8:
+  expr: current_money - total_cost
+  result: total_money_after_trip
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 70 - 44 = 26","dorothy_age:
+  value: 15
+  unit: years
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+younger_brother_age_limit:
+  value: 18
+  unit: years
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+regular_ticket_cost:
+  value: 10
+  unit: dollars
+  location: input
+  grand_unit: dollars
+  expr: null
+  formalized_expr: null
+discount_percentage:
+  value: 0.3
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+current_money:
+  value: 70
+  unit: dollars
+  location: input
+  grand_unit: dollars
+  expr: null
+  formalized_expr: null
+total_money_after_trip:
+  value: 26
+  unit: dollars
+  location: target
+  grand_unit: dollars
+  expr: current_money - total_cost
+  formalized_expr: current_money - (self_count + sibling_count) * regular_ticket_cost
+    * (identity_multiplier - discount_percentage) + ((self_count + sibling_count +
+    parents_count + grandparents_count) - (self_count + sibling_count) * regular_ticket_cost)
+identity_multiplier:
+  value: 1
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+self_count:
+  value: 1
+  unit: people
+  location: input
+  grand_unit: people
+  expr: null
+  formalized_expr: null
+sibling_count:
+  value: 1
+  unit: people
+  location: input
+  grand_unit: people
+  expr: null
+  formalized_expr: null
+parents_count:
+  value: 2
+  unit: people
+  location: input
+  grand_unit: people
+  expr: null
+  formalized_expr: null
+grandparents_count:
+  value: 1
+  unit: people
+  location: input
+  grand_unit: people
+  expr: null
+  formalized_expr: null
+total_people:
+  value: 5
+  unit: people
+  location: step1
+  grand_unit: people
+  expr: self_count + sibling_count + parents_count + grandparents_count
+  formalized_expr: self_count + sibling_count + parents_count + grandparents_count
+total_ticket_cost:
+  value: 50
+  unit: dollars
+  location: step2
+  grand_unit: dollars
+  expr: total_people * regular_ticket_cost
+  formalized_expr: (self_count + sibling_count + parents_count + grandparents_count)
+    * regular_ticket_cost
+discounted_count:
+  value: 2
+  unit: people
+  location: step3
+  grand_unit: people
+  expr: self_count + sibling_count
+  formalized_expr: self_count + sibling_count
+total_discounted_cost:
+  value: 14
+  unit: dollars
+  location: step4
+  grand_unit: dollars
+  expr: discounted_count * regular_ticket_cost * (identity_multiplier - discount_percentage)
+  formalized_expr: (self_count + sibling_count) * regular_ticket_cost * (identity_multiplier
+    - discount_percentage)
+regular_count:
+  value: 3
+  unit: people
+  location: step5
+  grand_unit: people
+  expr: total_people - discounted_count
+  formalized_expr: (self_count + sibling_count + parents_count + grandparents_count)
+    - (self_count + sibling_count)
+total_regular_cost:
+  value: 30
+  unit: dollars
+  location: step6
+  grand_unit: dollars
+  expr: regular_count * regular_ticket_cost
+  formalized_expr: (self_count + sibling_count + parents_count + grandparents_count)
+    - (self_count + sibling_count) * regular_ticket_cost
+total_cost:
+  value: 44
+  unit: dollars
+  location: step7
+  grand_unit: dollars
+  expr: total_discounted_cost + total_regular_cost
+  formalized_expr: (self_count + sibling_count) * regular_ticket_cost * (identity_multiplier
+    - discount_percentage) + ((self_count + sibling_count + parents_count + grandparents_count)
+    - (self_count + sibling_count) * regular_ticket_cost)",,,21.337
+92,"Jill runs a business breeding llamas. Nine of her llamas got pregnant with 1 calf, and 5 of them got pregnant with twins. After they give birth, Jill traded 8 of the calves for 2 new adult llamas. Then she sells 1/3 of her herd at the market. How many total llamas  (calves and adults) does Jill have now?",18,total_llamas,18.000000000000004,yes,"Pass ProblemFormalizer
+Pass Planner
+Pass Executor
+Running ProblemFormalizer...
+Running Planner...
+Running Executor...
+Pass Solver",,"jill_llamas_pregnant_with_calves:
+  value: 9
+  unit: llamas
+  location: input
+  grand_unit: llamas
+calves_from_pregnant_llamas:
+  value: 1
+  unit: calves
+  location: input
+  grand_unit: calves
+jill_llamas_pregnant_with_twins:
+  value: 5
+  unit: llamas
+  location: input
+  grand_unit: llamas
+twins_count:
+  value: 2
+  unit: null
+  location: input
+  grand_unit: null
+calves_traded:
+  value: 8
+  unit: calves
+  location: input
+  grand_unit: calves
+new_adult_llamas:
+  value: 2
+  unit: llamas
+  location: input
+  grand_unit: llamas
+fraction_sold_at_market:
+  value: 0.3333333333333333
+  unit: null
+  location: input
+  grand_unit: null
+total_llamas:
+  value: null
+  unit: llamas
+  location: target
+  grand_unit: llamas","step1:
+  expr: jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+  result: total_calves_from_single_pregnancy
+  result_unit: calves
+  result_grand_unit: calves
+  reported_expr: 9 * 1 = 9
+step2:
+  expr: jill_llamas_pregnant_with_twins * twins_count
+  result: total_calves_from_twins
+  result_unit: calves
+  result_grand_unit: calves
+  reported_expr: 5 * 2 = 10
+step3:
+  expr: total_calves_from_single_pregnancy + total_calves_from_twins
+  result: total_calves
+  result_unit: calves
+  result_grand_unit: calves
+  reported_expr: 9 + 10 = 19
+step4:
+  expr: jill_llamas_pregnant_with_calves + jill_llamas_pregnant_with_twins
+  result: total_pregnant_llamas
+  result_unit: llamas
+  result_grand_unit: llamas
+  reported_expr: 9 + 5 = 14
+step5:
+  expr: total_calves + total_pregnant_llamas
+  result: total_llamas_before_trade
+  result_unit: llamas
+  result_grand_unit: llamas
+  reported_expr: 19 + 14 = 33
+step6:
+  expr: total_llamas_before_trade - calves_traded + new_adult_llamas
+  result: total_llamas_after_trade
+  result_unit: llamas
+  result_grand_unit: llamas
+  reported_expr: 33 - 8 + 2 = 27
+step7:
+  expr: total_llamas_after_trade * fraction_sold_at_market
+  result: total_llamas_sold
+  result_unit: llamas
+  result_grand_unit: llamas
+  reported_expr: 27.0000000000000000 * 0.3333333333333333 = 8.9999999999999991
+step8:
+  expr: total_llamas_after_trade - total_llamas_sold
+  result: total_llamas
+  result_unit: llamas
+  result_grand_unit: llamas
+  reported_expr: 27.000000000000000 - 8.999999999999998 = 18.000000000000002","jill_llamas_pregnant_with_calves:
+  value: 9
+  unit: llamas
+  location: input
+  grand_unit: llamas
+  expr: null
+  formalized_expr: null
+calves_from_pregnant_llamas:
+  value: 1
+  unit: calves
+  location: input
+  grand_unit: calves
+  expr: null
+  formalized_expr: null
+jill_llamas_pregnant_with_twins:
+  value: 5
+  unit: llamas
+  location: input
+  grand_unit: llamas
+  expr: null
+  formalized_expr: null
+twins_count:
+  value: 2
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+calves_traded:
+  value: 8
+  unit: calves
+  location: input
+  grand_unit: calves
+  expr: null
+  formalized_expr: null
+new_adult_llamas:
+  value: 2
+  unit: llamas
+  location: input
+  grand_unit: llamas
+  expr: null
+  formalized_expr: null
+fraction_sold_at_market:
+  value: 0.3333333333333333
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+total_llamas:
+  value: 18.000000000000004
+  unit: llamas
+  location: target
+  grand_unit: llamas
+  expr: total_llamas_after_trade - total_llamas_sold
+  formalized_expr: ((jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+    + jill_llamas_pregnant_with_twins * twins_count) + (jill_llamas_pregnant_with_calves
+    + jill_llamas_pregnant_with_twins) - calves_traded + new_adult_llamas) - (((jill_llamas_pregnant_with_calves
+    * calves_from_pregnant_llamas + jill_llamas_pregnant_with_twins * twins_count)
+    + (jill_llamas_pregnant_with_calves + jill_llamas_pregnant_with_twins) - calves_traded
+    + new_adult_llamas) * fraction_sold_at_market)
+total_calves_from_single_pregnancy:
+  value: 9
+  unit: calves
+  location: step1
+  grand_unit: calves
+  expr: jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+  formalized_expr: jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+total_calves_from_twins:
+  value: 10
+  unit: calves
+  location: step2
+  grand_unit: calves
+  expr: jill_llamas_pregnant_with_twins * twins_count
+  formalized_expr: jill_llamas_pregnant_with_twins * twins_count
+total_calves:
+  value: 19
+  unit: calves
+  location: step3
+  grand_unit: calves
+  expr: total_calves_from_single_pregnancy + total_calves_from_twins
+  formalized_expr: jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+    + jill_llamas_pregnant_with_twins * twins_count
+total_pregnant_llamas:
+  value: 14
+  unit: llamas
+  location: step4
+  grand_unit: llamas
+  expr: jill_llamas_pregnant_with_calves + jill_llamas_pregnant_with_twins
+  formalized_expr: jill_llamas_pregnant_with_calves + jill_llamas_pregnant_with_twins
+total_llamas_before_trade:
+  value: 33
+  unit: llamas
+  location: step5
+  grand_unit: llamas
+  expr: total_calves + total_pregnant_llamas
+  formalized_expr: (jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+    + jill_llamas_pregnant_with_twins * twins_count) + (jill_llamas_pregnant_with_calves
+    + jill_llamas_pregnant_with_twins)
+total_llamas_after_trade:
+  value: 27
+  unit: llamas
+  location: step6
+  grand_unit: llamas
+  expr: total_llamas_before_trade - calves_traded + new_adult_llamas
+  formalized_expr: (jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+    + jill_llamas_pregnant_with_twins * twins_count) + (jill_llamas_pregnant_with_calves
+    + jill_llamas_pregnant_with_twins) - calves_traded + new_adult_llamas
+total_llamas_sold:
+  value: 8.999999999999998
+  unit: llamas
+  location: step7
+  grand_unit: llamas
+  expr: total_llamas_after_trade * fraction_sold_at_market
+  formalized_expr: ((jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+    + jill_llamas_pregnant_with_twins * twins_count) + (jill_llamas_pregnant_with_calves
+    + jill_llamas_pregnant_with_twins) - calves_traded + new_adult_llamas) * fraction_sold_at_market",,,31.339

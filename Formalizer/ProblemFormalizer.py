@@ -43,7 +43,8 @@ LOG_PATH = OUTPUT_DIR / "Log.yaml"
 
 DEFAULT_MODEL = "google/gemini-2.0-flash-001"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MAX_RETRIES = 3
+DEFAULT_MAX_TOKENS = 4096
+DEFAULT_MAX_RETRIES = 5
 NUMBER_TOLERANCE = 1e-9
 
 NUMBER_WORDS = {
@@ -112,6 +113,7 @@ MULTIPLIER_WORDS = {
     "thrice": 3,
     "triple": 3,
     "tripled": 3,
+    "twins": 2,
 }
 
 UNIT_BASE_ALIASES = {
@@ -169,6 +171,8 @@ UNIT_BASE_ALIASES = {
     "items": "item",
     "piece": "item",
     "pieces": "item",
+    "pair": "pair",
+    "pairs": "pair",
     "dozen": "dozen",
     "dozens": "dozen",
 }
@@ -185,12 +189,25 @@ STANDARD_CONVERSION_FACTORS = [
     ("minute", "hour", "unit_conversion_minutes_per_hour", 60),
     ("hour", "day", "unit_conversion_hours_per_day", 24),
     ("day", "week", "unit_conversion_days_per_week", 7),
+    ("day", "year", "unit_conversion_days_per_year", 365),
+    ("week", "year", "unit_conversion_weeks_per_year", 52),
     ("month", "year", "unit_conversion_months_per_year", 12),
     ("cent", "dollar", "unit_conversion_cents_per_dollar", 100),
     ("ounce", "pound", "unit_conversion_ounces_per_pound", 16),
     ("pound", "ton", "unit_conversion_pounds_per_ton", 2000),
+    ("item", "pair", "unit_conversion_items_per_pair", 2),
     ("item", "dozen", "unit_conversion_items_per_dozen", 12),
 ]
+
+STANDARD_CONVERSION_ALIASES = {
+    entity_name.replace("unit_conversion_", ""): entity_name
+    for _, _, entity_name, _ in STANDARD_CONVERSION_FACTORS
+}
+
+CONVERSION_BY_UNITS = {
+    (smaller_unit, larger_unit): value
+    for smaller_unit, larger_unit, _, value in STANDARD_CONVERSION_FACTORS
+}
 
 
 class ProblemFormalizerError(Exception):
@@ -247,8 +264,21 @@ Nhiệm vụ của bạn:
 12. Với quan hệ so sánh như "X has 2 fewer than Y", "X has 5 more than Y":
     số trực tiếp là độ chênh lệch, không phải số lượng thật của X.
     Tên entity phải thể hiện đây là độ chênh, ví dụ books_borrowed_fewer_than_books_bought.
+    Chỉ dùng more_than/fewer_than/less_than cho quan hệ cộng/trừ.
+    Với "twice as many as", "three times as many as", "half as many as",
+    đây là quan hệ nhân/chia, phải tạo scalar multiplier/fraction, không đặt tên là more_than.
+    Ví dụ "Kenley has twice as many as McKenna" -> kenley_to_mckenna_multiplier: 2.
+    Ví dụ "Joshua made half as many as Miles" -> joshua_to_miles_fraction: 0.5.
+    Ví dụ "twins" nghĩa là 2, hãy tạo scalar/value 2 nếu cần tính số con.
 13. Không được bỏ sót số trực tiếp đi kèm đơn vị trong đề bài.
     Ví dụ "in 7 days" phải có một input entity value 7, unit days, không được bỏ vì đã có "5 days" trước đó.
+    Ví dụ "$.50 each" -> 0.5, "40A each" -> 40, "$500/month" -> 500.
+    Ví dụ "three iPhones", "four grades", "five weeks" cũng phải có input entity value tương ứng.
+    Nếu cùng một số xuất hiện ở hai dữ kiện khác nhau, không được dùng một entity để đại diện cho cả hai nếu vai trò khác nhau.
+    Ví dụ "5 llamas got pregnant with twins" và "traded 8 calves for 2 new adult llamas" cần có cả twins/count 2 và new_adult_llamas 2 nếu cả hai tham gia tính.
+    Ví dụ "finished half of a 500 piece puzzle" không được tạo 250; phải giữ 500 và fraction 0.5.
+    Không đổi đơn vị ngay trong ProblemEntities. Ví dụ "12000 meters" phải giữ value 12000, unit meters; không đổi thành 12 kilometers.
+    Không tạo complement fraction. Ví dụ có "2/5 are boys" thì giữ 0.4 cho boys_fraction; không tự tạo girls_fraction 0.6.
 14. Target phải là đúng đại lượng được hỏi, không phải đại lượng trung gian.
     Ví dụ câu hỏi "How many old books ... reread" thì target phải chứa reread, như old_books_to_reread.
     Không đặt target là total_books_needed nếu đề hỏi số sách cũ phải đọc lại.
@@ -372,6 +402,7 @@ def call_openrouter(problem: str, previous_error: Optional[str] = None) -> str:
             {"role": "user", "content": build_user_prompt(problem, previous_error=previous_error)},
         ],
         "temperature": 0,
+        "max_tokens": int(os.getenv("OPENROUTER_MAX_TOKENS", DEFAULT_MAX_TOKENS)),
     }
 
     try:
@@ -495,7 +526,13 @@ def add_standard_conversion_entities(
     enriched = dict(entities)
 
     for smaller_unit, larger_unit, entity_name, value in STANDARD_CONVERSION_FACTORS:
-        if smaller_unit not in unit_bases or larger_unit not in unit_bases:
+        package_conversion = entity_name in {
+            "unit_conversion_items_per_pair",
+            "unit_conversion_items_per_dozen",
+        }
+        if larger_unit not in unit_bases:
+            continue
+        if not package_conversion and smaller_unit not in unit_bases:
             continue
         if entity_name in enriched:
             continue
@@ -508,6 +545,164 @@ def add_standard_conversion_entities(
         }
 
     return enriched
+
+
+def normalize_standard_conversion_aliases(
+    entities: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    normalized = dict(entities)
+
+    for alias_name, canonical_name in STANDARD_CONVERSION_ALIASES.items():
+        if alias_name not in normalized:
+            continue
+        if canonical_name in normalized:
+            normalized.pop(alias_name)
+            continue
+
+        entity = dict(normalized.pop(alias_name))
+        entity["location"] = "input"
+        entity["unit"] = None
+        entity["grand_unit"] = None
+        normalized[canonical_name] = entity
+
+    return normalized
+
+
+def extract_direct_unit_mentions(problem: str) -> list[tuple[float, str, str]]:
+    text = problem.lower()
+    mentions: list[tuple[float, str, str]] = []
+    pattern = re.compile(
+        r"(?<![\w/])"
+        r"(\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)"
+        r"(?!\s*/\s*\d|%)"
+        r"\s*(?:/\s*)?([a-z][a-z-]*)\b"
+    )
+    ignored_following_words = {"am", "pm", "percent", "percentage", "a", "an", "the"}
+
+    for match in pattern.finditer(text):
+        unit_word = match.group(2)
+        if unit_word in ignored_following_words:
+            continue
+        base = UNIT_BASE_ALIASES.get(unit_word)
+        if not base:
+            continue
+        mentions.append((float(match.group(1).replace(",", "")), unit_word, base))
+
+    return mentions
+
+
+def repair_converted_input_values(
+    problem: str,
+    entities: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    mentions = extract_direct_unit_mentions(problem)
+    if not mentions:
+        return entities
+
+    repaired = dict(entities)
+    for name, entity in list(repaired.items()):
+        if entity.get("location") != "input":
+            continue
+        value = normalize_empty(entity.get("value"))
+        if value is None:
+            continue
+        current_bases = unit_base_keys(entity.get("unit"))
+        if not current_bases:
+            continue
+
+        numeric_value = float(value)
+        for original_value, original_unit_word, original_base in mentions:
+            for current_base in current_bases:
+                factor = CONVERSION_BY_UNITS.get((original_base, current_base))
+                if not factor:
+                    continue
+                if not numbers_equal(original_value / factor, numeric_value):
+                    continue
+
+                entity = dict(entity)
+                entity["value"] = int(original_value) if original_value.is_integer() else original_value
+                entity["unit"] = original_unit_word
+                repaired[name] = entity
+                break
+            else:
+                continue
+            break
+
+    return repaired
+
+
+def drop_computed_complement_scalars(
+    problem: str,
+    entities: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Loại các scalar complement mà LLM hay tự suy ra.
+
+    Ví dụ đề chỉ nói "2/5 are boys" thì 3/5 girls là phép tính
+    identity - boys_fraction, không phải input trực tiếp.
+    """
+    direct_values = extract_direct_numeric_values(problem)
+    direct_unit_values = [
+        entity.get("value")
+        for entity in entities.values()
+        if entity.get("location") == "input"
+        and normalize_empty(entity.get("unit")) is not None
+    ]
+    normalized = dict(entities)
+
+    for name, entity in list(normalized.items()):
+        if entity.get("location") != "input":
+            continue
+        if normalize_empty(entity.get("unit")) is not None:
+            continue
+
+        terms = set(name.split("_"))
+        if not terms & {"fraction", "percent", "percentage", "ratio", "share", "portion"}:
+            continue
+
+        value = normalize_empty(entity.get("value"))
+        if value is None:
+            continue
+        if any(numbers_equal(value, direct_value) for direct_value in direct_values):
+            continue
+        if any(numbers_equal(value, unit_value) for unit_value in direct_unit_values if unit_value is not None):
+            continue
+        if any(
+            0 < float(direct_value) < 1
+            and numbers_equal(float(value), 1 - float(direct_value))
+            for direct_value in direct_values
+        ):
+            normalized.pop(name)
+
+    return normalized
+
+
+def drop_unknown_zero_placeholders(
+    problem: str,
+    entities: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Một lỗi thường gặp của LLM là bịa age/count = 0 cho thông tin chỉ nói bằng
+    quan hệ như "younger brother". Nếu đề không có số 0 trực tiếp, bỏ entity đó
+    để Planner dùng quan hệ/ngữ cảnh thay vì một số giả.
+    """
+    direct_values = extract_direct_numeric_values(problem)
+    if any(numbers_equal(value, 0) for value in direct_values):
+        return entities
+
+    normalized = dict(entities)
+    placeholder_terms = {"age", "count", "number"}
+    for name, entity in list(normalized.items()):
+        if entity.get("location") != "input":
+            continue
+        value = normalize_empty(entity.get("value"))
+        if value is None or not numbers_equal(value, 0):
+            continue
+        if not (placeholder_terms & set(name.split("_"))):
+            continue
+        normalized.pop(name)
+
+    return normalized
 
 
 def problem_asks_invited_friends(problem: str) -> bool:
@@ -550,6 +745,7 @@ def add_default_context_entities(
     entities: Dict[str, Dict[str, Any]],
 ) -> Dict[str, Dict[str, Any]]:
     enriched = dict(entities)
+    text = problem.lower()
 
     if problem_asks_invited_friends(problem) and "host_count" not in enriched:
         enriched["host_count"] = {
@@ -558,6 +754,99 @@ def add_default_context_entities(
             "location": "input",
             "grand_unit": "people",
         }
+
+    target_percentage = any(
+        entity.get("location") == "target"
+        and (
+            "percent" in str(name).lower().split("_")
+            or "percentage" in str(name).lower().split("_")
+            or "percent" in str(name).lower()
+            or "percentage" in str(name).lower()
+            or normalize_unit_text(entity.get("unit")) in {"percent", "percentage"}
+            or normalize_unit_text(entity.get("grand_unit")) in {"percent", "percentage"}
+        )
+        for name, entity in enriched.items()
+    )
+    if target_percentage and "percentage_scale" not in enriched:
+        enriched["percentage_scale"] = {
+            "value": 100,
+            "unit": None,
+            "location": "input",
+            "grand_unit": None,
+        }
+
+    needs_identity = bool(
+        re.search(
+            r"\bas many as\b|\bremainder\b|\bremaining\b|\bthe rest\b|\bleft\b|\bdiscount\b|\bnot\s+(?:in|on|at)\b"
+            r"|\bgive\b.*\beach\b|\bsame amount\b|\btwice\b|\bdouble\b|\btriple\b|\bthrice\b",
+            text,
+        )
+    )
+    if needs_identity and "identity_multiplier" not in enriched:
+        enriched["identity_multiplier"] = {
+            "value": 1,
+            "unit": None,
+            "location": "input",
+            "grand_unit": None,
+        }
+
+    if re.search(r"\bsplit\s+(?:the\s+)?remaining\b", problem.lower()) and "split_count" not in enriched:
+        enriched["split_count"] = {
+            "value": 2,
+            "unit": None,
+            "location": "input",
+            "grand_unit": None,
+        }
+
+    if (
+        re.search(r"\broommates?\b", problem.lower())
+        and re.search(r"\bdivide\b|\bequally\b|\bshare\b", problem.lower())
+        and "host_count" not in enriched
+    ):
+        enriched["host_count"] = {
+            "value": 1,
+            "unit": "people",
+            "location": "input",
+            "grand_unit": "people",
+        }
+
+    family_match = re.search(
+        r"\bfamily\s+(?:consists\s+of|includes)\s+(.*?)(?:\.|\?|$)",
+        text,
+    )
+    if family_match:
+        family_members = family_match.group(1)
+
+        def add_people_count(name: str, value: int) -> None:
+            if name in enriched:
+                return
+            enriched[name] = {
+                "value": value,
+                "unit": "people",
+                "location": "input",
+                "grand_unit": "people",
+            }
+
+        if re.search(r"\b(?:her|him|herself|himself|self|me)\b", family_members):
+            add_people_count("self_count", 1)
+        if re.search(r"\b(?:younger|older|little|big)?\s*(?:brother|sister|sibling)\b", family_members):
+            add_people_count("sibling_count", 1)
+        if re.search(r"\bparents\b", family_members):
+            add_people_count("parents_count", 2)
+        else:
+            parent_count = 0
+            parent_count += len(re.findall(r"\bmother\b", family_members))
+            parent_count += len(re.findall(r"\bfather\b", family_members))
+            if parent_count:
+                add_people_count("parents_count", parent_count)
+        if re.search(r"\bgrandparents\b", family_members):
+            add_people_count("grandparents_count", 2)
+        else:
+            grandparent_count = 0
+            grandparent_count += len(re.findall(r"\bgrandfather\b", family_members))
+            grandparent_count += len(re.findall(r"\bgrandmother\b", family_members))
+            if grandparent_count:
+                add_people_count("grandparents_count", grandparent_count)
 
     return enriched
 
@@ -612,6 +901,81 @@ def normalize_item_target_grand_units(
 
         entity = dict(entity)
         entity["grand_unit"] = target_unit
+        normalized[name] = entity
+
+    return normalized
+
+
+PAIR_TARGET_UNITS = {
+    "earring",
+    "earrings",
+    "shoe",
+    "shoes",
+    "sock",
+    "socks",
+    "glove",
+    "gloves",
+}
+
+
+def normalize_pair_target_units(
+    entities: Dict[str, Dict[str, Any]]
+) -> Dict[str, Dict[str, Any]]:
+    normalized = dict(entities)
+
+    has_pair_input = any(
+        entity.get("location") == "input" and "pair" in unit_base_keys(entity.get("unit"))
+        for entity in normalized.values()
+    )
+    if not has_pair_input:
+        return normalized
+
+    for name, entity in list(normalized.items()):
+        if entity.get("location") != "target":
+            continue
+        if "pair" not in unit_base_keys(entity.get("unit")):
+            continue
+
+        name_terms = {term for term in name.split("_") if term}
+        target_terms = name_terms & PAIR_TARGET_UNITS
+        if not target_terms:
+            continue
+
+        target_unit = sorted(target_terms, key=len, reverse=True)[0]
+        entity = dict(entity)
+        entity["unit"] = target_unit
+        entity["grand_unit"] = target_unit
+        normalized[name] = entity
+
+    return normalized
+
+
+def normalize_relative_delta_units(
+    entities: Dict[str, Dict[str, Any]]
+) -> Dict[str, Dict[str, Any]]:
+    targets = [
+        entity
+        for entity in entities.values()
+        if entity.get("location") == "target"
+    ]
+    if len(targets) != 1:
+        return entities
+
+    target_unit = normalize_empty(targets[0].get("unit"))
+    target_grand_unit = normalize_empty(targets[0].get("grand_unit")) or target_unit
+    if target_unit is None:
+        return entities
+
+    normalized = dict(entities)
+    for name, entity in list(normalized.items()):
+        if not any(marker in name for marker in ("_more_than", "_less_than", "_fewer_than")):
+            continue
+        if normalize_empty(entity.get("unit")) is not None:
+            continue
+
+        entity = dict(entity)
+        entity["unit"] = target_unit
+        entity["grand_unit"] = target_grand_unit
         normalized[name] = entity
 
     return normalized
@@ -703,7 +1067,18 @@ def extract_direct_numeric_values(problem: str) -> list[float]:
     values: list[float] = []
     covered_spans: list[tuple[int, int]] = []
 
+    for match in re.finditer(r"\b(\d+(?:,\d{3})*)\s+(\d+)\s*/\s*(\d+)\b", text):
+        whole = float(match.group(1).replace(",", ""))
+        numerator = float(match.group(2))
+        denominator = float(match.group(3))
+        if denominator == 0:
+            continue
+        values.append(whole + numerator / denominator)
+        covered_spans.append(match.span())
+
     for match in re.finditer(r"\b(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)\b", text):
+        if span_is_covered(match.span(), covered_spans):
+            continue
         numerator = float(match.group(1))
         denominator = float(match.group(2))
         if denominator == 0:
@@ -715,7 +1090,7 @@ def extract_direct_numeric_values(problem: str) -> list[float]:
         r"\b(?:(a|an)|((?:zero|one|two|three|four|five|six|seven|eight|nine|ten|"
         r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
         r"nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)"
-        r"(?:[\s-]+(?:one|two|three|four|five|six|seven|eight|nine))?))\s+"
+        r"(?:[\s-]+(?:one|two|three|four|five|six|seven|eight|nine))?))[\s-]+"
         r"(half|halves|thirds?|fourths?|quarters?|fifths?|sixths?|sevenths?|"
         r"eighths?|ninths?|tenths?)\b"
     )
@@ -738,7 +1113,7 @@ def extract_direct_numeric_values(problem: str) -> list[float]:
         values.append(1 / denominator)
         covered_spans.append(match.span())
 
-    for match in re.finditer(r"\b(twice|double|doubled|thrice|triple|tripled)\b", text):
+    for match in re.finditer(r"\b(twice|double|doubled|thrice|triple|tripled|twins)\b", text):
         if span_is_covered(match.span(), covered_spans):
             continue
         values.append(float(MULTIPLIER_WORDS[match.group(1)]))
@@ -750,7 +1125,34 @@ def extract_direct_numeric_values(problem: str) -> list[float]:
         values.append(float(match.group(1).replace(",", "")) / 100)
         covered_spans.append(match.span())
 
-    for match in re.finditer(r"(?<![\w/])\d+(?:,\d{3})*(?:\.\d+)?(?!\s*/|\w|%)", text):
+    for match in re.finditer(r"\b(\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)\s+(?:percent|percentage)\b", text):
+        if span_is_covered(match.span(), covered_spans):
+            continue
+        values.append(float(match.group(1).replace(",", "")) / 100)
+        covered_spans.append(match.span())
+
+    percent_word_pattern = re.compile(
+        r"\b((?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|"
+        r"twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+        r"twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)"
+        r"(?:[\s-]+(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|"
+        r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
+        r"nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
+        r"hundred|thousand))*)\s+(?:percent|percentage)\b"
+    )
+    for match in percent_word_pattern.finditer(text):
+        if span_is_covered(match.span(), covered_spans):
+            continue
+        value = parse_number_word_phrase(match.group(1))
+        if value is None:
+            continue
+        values.append(float(value) / 100)
+        covered_spans.append(match.span())
+
+    for match in re.finditer(
+        r"(?<![\w/])(?:\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)(?!\s*/\s*\d|%)",
+        text,
+    ):
         if span_is_covered(match.span(), covered_spans):
             continue
         raw_value = match.group(0).replace(",", "")
@@ -778,6 +1180,112 @@ def extract_direct_numeric_values(problem: str) -> list[float]:
     return values
 
 
+def extract_required_scalar_values(problem: str) -> list[float]:
+    text = problem.lower()
+    values: list[float] = []
+    covered_spans: list[tuple[int, int]] = []
+
+    for match in re.finditer(r"\b(\d+(?:,\d{3})*)\s+(\d+)\s*/\s*(\d+)\b", text):
+        whole = float(match.group(1).replace(",", ""))
+        numerator = float(match.group(2))
+        denominator = float(match.group(3))
+        if denominator == 0:
+            continue
+        values.append(whole + numerator / denominator)
+        covered_spans.append(match.span())
+
+    scalar_patterns = [
+        r"\b\d+(?:\.\d+)?\s*/\s*\d+(?:\.\d+)?\b",
+        r"\b(?:(?:a|an)|(?:(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|"
+        r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
+        r"nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)"
+        r"(?:[\s-]+(?:one|two|three|four|five|six|seven|eight|nine))?))[\s-]+"
+        r"(?:half|halves|thirds?|fourths?|quarters?|fifths?|sixths?|sevenths?|"
+        r"eighths?|ninths?|tenths?)\b",
+        r"\b(?:half|quarter)\b",
+        r"\b(?:twice|double|doubled|thrice|triple|tripled)\b",
+        r"\b(?:\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)\s*%",
+        r"\b(?:\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)\s+(?:percent|percentage)\b",
+        r"\b(?:(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|"
+        r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
+        r"nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
+        r"hundred|thousand)(?:[\s-]+(?:zero|one|two|three|four|five|six|seven|"
+        r"eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|"
+        r"seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|"
+        r"seventy|eighty|ninety|hundred|thousand))*)\s+(?:percent|percentage)\b",
+        r"\b(?:\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)\s+times\b",
+        r"\b(?:(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|"
+        r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
+        r"nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
+        r"hundred|thousand)(?:[\s-]+(?:zero|one|two|three|four|five|six|seven|"
+        r"eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|"
+        r"seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|"
+        r"seventy|eighty|ninety|hundred|thousand))*)\s+times\b",
+    ]
+
+    for pattern in scalar_patterns:
+        for match in re.finditer(pattern, text):
+            if span_is_covered(match.span(), covered_spans):
+                continue
+            snippet = match.group(0)
+            extracted = extract_direct_numeric_values(snippet)
+            if not extracted:
+                continue
+            values.append(extracted[0])
+            covered_spans.append(match.span())
+
+    return values
+
+
+def extract_required_word_unit_numeric_values(problem: str) -> list[float]:
+    text = problem.lower()
+    values: list[float] = []
+
+    number_word = (
+        r"(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|"
+        r"twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
+        r"nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
+        r"hundred|thousand)(?:[\s-]+(?:zero|one|two|three|four|five|six|"
+        r"seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|"
+        r"sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|"
+        r"sixty|seventy|eighty|ninety|hundred|thousand))*"
+    )
+    pattern = re.compile(rf"\b({number_word})\s+([a-z][a-z-]*)\b")
+    ignored_following_words = {
+        "percent",
+        "percentage",
+        "times",
+        "more",
+        "less",
+        "fewer",
+        "as",
+        "than",
+        "people",
+        "person",
+        "girls",
+        "girl",
+        "boys",
+        "boy",
+        "men",
+        "man",
+        "women",
+        "woman",
+    }
+
+    for match in pattern.finditer(text):
+        following_word = match.group(2)
+        if following_word in ignored_following_words:
+            continue
+        value = parse_number_word_phrase(match.group(1))
+        if value is None:
+            continue
+        if value == 1:
+            continue
+        values.append(float(value))
+
+    return values
+
+
 def extract_required_unit_numeric_values(problem: str) -> list[float]:
     """
     Lấy các số dạng digit đi kèm một unit word ngay sau đó.
@@ -790,13 +1298,15 @@ def extract_required_unit_numeric_values(problem: str) -> list[float]:
 
     pattern = re.compile(
         r"(?<![\w/])"
-        r"(\d+(?:,\d{3})*(?:\.\d+)?)"
-        r"(?!\s*/|\w|%)"
-        r"\s+([a-z][a-z-]*)\b"
+        r"(\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)"
+        r"(?!\s*/\s*\d|%)"
+        r"\s*(?:/\s*)?([a-z][a-z-]*)\b"
     )
     ignored_following_words = {
         "am",
         "pm",
+        "percent",
+        "percentage",
         "a",
         "an",
         "the",
@@ -806,7 +1316,13 @@ def extract_required_unit_numeric_values(problem: str) -> list[float]:
         following_word = match.group(2)
         if following_word in ignored_following_words:
             continue
-        values.append(float(match.group(1).replace(",", "")))
+        prefix = text[max(0, match.start() - 12): match.start()]
+        if re.search(r"\bat\s+least\s+$", prefix):
+            continue
+        value = float(match.group(1).replace(",", ""))
+        if numbers_equal(value, 1):
+            continue
+        values.append(value)
 
     return values
 
@@ -834,6 +1350,8 @@ def validate_values_are_direct(problem: str, entities: Dict[str, Dict[str, Any]]
     for entity_name, entity in entities.items():
         if entity["location"] != "input":
             continue
+        if entity_name.startswith("unit_conversion_"):
+            continue
 
         value = entity["value"]
         match_index = next(
@@ -857,26 +1375,24 @@ def validate_values_are_direct(problem: str, entities: Dict[str, Dict[str, Any]]
             f"Thiếu thực thể input cho các số/scalar trực tiếp trong đề: {missing}."
         )
 
-    unused_input_values = input_values.copy()
     missing_required_values: list[float] = []
-    for required_value in extract_required_unit_numeric_values(problem):
-        match_index = next(
-            (
-                index
-                for index, input_value in enumerate(unused_input_values)
-                if numbers_equal(input_value, required_value)
-            ),
-            None,
-        )
-        if match_index is None:
+    required_values = (
+        extract_required_unit_numeric_values(problem)
+        + extract_required_word_unit_numeric_values(problem)
+        + extract_required_scalar_values(problem)
+    )
+    for required_value in required_values:
+        if not any(numbers_equal(input_value, required_value) for input_value in input_values):
             missing_required_values.append(required_value)
-            continue
-        del unused_input_values[match_index]
 
     if missing_required_values:
-        missing = ", ".join(format_number_for_error(value) for value in missing_required_values)
+        unique_missing: list[float] = []
+        for value in missing_required_values:
+            if not any(numbers_equal(value, existing) for existing in unique_missing):
+                unique_missing.append(value)
+        missing = ", ".join(format_number_for_error(value) for value in unique_missing)
         raise ProblemFormalizerError(
-            f"Thiếu thực thể input cho số trực tiếp có đơn vị trong đề: {missing}."
+            f"Thiếu thực thể input cho số/scalar trực tiếp bắt buộc trong đề: {missing}."
         )
 
 
@@ -896,6 +1412,8 @@ def validate_target_name_matches_question(problem: str, entities: Dict[str, Dict
         required_terms.append("reread")
     if problem_asks_invited_friends(problem):
         required_terms.append("friend")
+    if re.search(r"\bnot\s+in\b|\bnot\s+(?:on|at)\b", text):
+        required_terms.append("not")
 
     missing_terms = [term for term in required_terms if term not in target_name]
     if missing_terms:
@@ -904,20 +1422,58 @@ def validate_target_name_matches_question(problem: str, entities: Dict[str, Dict
             f"tên target cần chứa {missing_terms}."
         )
 
+    if re.search(r"\bhow much\b.*\bgive\b.*\beach\b", text) and not any(
+        term in target_name for term in ("give", "each", "per")
+    ):
+        raise ProblemFormalizerError(
+            f"Target {target_name!r} chưa khớp đại lượng được hỏi; "
+            "câu hỏi hỏi số tiền phải give to each người, target cần thể hiện amount_each/per_person."
+        )
+
+
+def validate_multiplicative_relationship_names(
+    problem: str,
+    entities: Dict[str, Dict[str, Any]],
+) -> None:
+    text = problem.lower()
+    if not re.search(r"\b(?:twice|double|thrice|triple|[a-z]+|\d+)\s+as\s+many\s+as\b", text):
+        return
+
+    required_scalar_values = extract_required_scalar_values(problem)
+    for entity_name, entity in entities.items():
+        if "_more_than_" not in entity_name and "_less_than_" not in entity_name and "_fewer_than_" not in entity_name:
+            continue
+
+        value = entity.get("value")
+        if value is None:
+            continue
+        if not any(numbers_equal(value, scalar_value) for scalar_value in required_scalar_values):
+            continue
+
+        raise ProblemFormalizerError(
+            f"{entity_name!r} đang dùng tên quan hệ cộng/trừ cho một multiplier/fraction. "
+            "Với 'twice/three times/half as many as', hãy tạo entity dạng *_multiplier hoặc *_fraction, "
+            "không dùng more_than/fewer_than/less_than."
+        )
+
 
 def validate_and_normalize(entities: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     required_fields = {"value", "unit", "location", "grand_unit"}
     normalized: Dict[str, Dict[str, Any]] = {}
     target_count = 0
 
-    for entity_name, entity in entities.items():
-        if not isinstance(entity_name, str) or not entity_name.strip():
+    for raw_entity_name, entity in entities.items():
+        if not isinstance(raw_entity_name, str) or not raw_entity_name.strip():
             raise ProblemFormalizerError("Tên entity phải là string không rỗng.")
+
+        entity_name = raw_entity_name.strip().lower()
 
         if not re.match(r"^[a-z][a-z0-9_]*$", entity_name):
             raise ProblemFormalizerError(
-                f"Tên entity phải là snake_case hợp lệ, hiện là: {entity_name!r}"
+                f"Tên entity phải là snake_case hợp lệ, hiện là: {raw_entity_name!r}"
             )
+        if entity_name in normalized:
+            raise ProblemFormalizerError(f"Tên entity bị trùng sau normalize lowercase: {entity_name!r}")
 
         if not isinstance(entity, dict):
             raise ProblemFormalizerError(f"Entity {entity_name} phải là dictionary.")
@@ -998,8 +1554,13 @@ def run() -> None:
             try:
                 parsed_entities = parse_yaml(raw_response)
                 candidate_entities = validate_and_normalize(parsed_entities)
+                candidate_entities = normalize_standard_conversion_aliases(candidate_entities)
+                candidate_entities = repair_converted_input_values(problem, candidate_entities)
+                candidate_entities = drop_computed_complement_scalars(problem, candidate_entities)
+                candidate_entities = drop_unknown_zero_placeholders(problem, candidate_entities)
                 validate_values_are_direct(problem, candidate_entities)
                 validate_target_name_matches_question(problem, candidate_entities)
+                validate_multiplicative_relationship_names(problem, candidate_entities)
             except ProblemFormalizerError as exc:
                 previous_error = str(exc)
                 last_validation_error = exc
@@ -1012,6 +1573,8 @@ def run() -> None:
             raise ProblemFormalizerError(str(last_validation_error))
 
         entities = normalize_item_target_grand_units(entities)
+        entities = normalize_pair_target_units(entities)
+        entities = normalize_relative_delta_units(entities)
         entities = add_standard_conversion_entities(entities, problem=problem)
         entities = add_default_context_entities(problem, entities)
         dump_entities(entities)

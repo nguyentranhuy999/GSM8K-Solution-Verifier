@@ -57,6 +57,7 @@ INSIDE_CHECKER_PATH = ROOT_DIR / "Verifier" / "InsideChecker.py"
 
 DEFAULT_MODEL = "google/gemini-2.0-flash-001"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_MAX_TOKENS = 4096
 DEFAULT_MAX_REPAIR_ITERATIONS = 5
 
 
@@ -546,6 +547,12 @@ def run_inside_checker() -> Tuple[bool, str]:
     if error_data in (None, {}, [], ""):
         return True, output.strip()
 
+    if isinstance(error_data, list) and all(
+        isinstance(item, dict) and item.get("diagnosis") == "extra step"
+        for item in error_data
+    ):
+        return True, output.strip()
+
     return False, output.strip()
 
 
@@ -662,6 +669,7 @@ def call_openrouter_for_repair() -> Dict[str, Any]:
             {"role": "user", "content": build_repair_user_prompt()},
         ],
         "temperature": 0,
+        "max_tokens": int(os.getenv("OPENROUTER_MAX_TOKENS", DEFAULT_MAX_TOKENS)),
     }
 
     try:

@@ -1,0 +1,491 @@
+index,question,official_answer,target_entity,pipeline_answer,correct,solver_stdout,solver_stderr,problem_entities_yaml,plan_yaml,plan_entities_yaml,error_stage,error,duration_seconds
+27,Carmela has $7 and each of her four cousins has $2. How much will Carmela have to give to each of her cousins so that she and her cousins will have the same amount of money?,1,,,no,"Pass ProblemFormalizer
+Fail Planner
+Running ProblemFormalizer...
+Running Planner...",Reason: step1.expr dùng entity chưa tồn tại hoặc chưa được tạo: ['amount_given_to_each_cousin'],"carmela_money:
+  value: 7
+  unit: dollars
+  location: input
+  grand_unit: dollars
+cousin_money:
+  value: 2
+  unit: dollars
+  location: input
+  grand_unit: dollars
+number_of_cousins:
+  value: 4
+  unit: cousins
+  location: input
+  grand_unit: null
+amount_given_to_each_cousin:
+  value: null
+  unit: dollars
+  location: target
+  grand_unit: dollars","step1:
+  expr: jill_llamas_pregnant_with_calves * calves_from_pregnant_llamas
+  result: total_calves_from_single_pregnancy
+  result_unit: calves
+  result_grand_unit: calves
+  reported_expr: 9 * 1 = 9
+step2:
+  expr: jill_llamas_pregnant_with_twins * twins_count
+  result: total_calves_from_twins
+  result_unit: calves
+  result_grand_unit: calves
+  reported_expr: 5 * 2 = 10
+step3:
+  expr: total_calves_from_single_pregnancy + total_calves_from_twins
+  result: total_calves
+  result_unit: calves
+  result_grand_unit: calves
+  reported_expr: 9 + 10 = 19
+step4:
+  expr: jill_llamas_pregnant_with_calves + jill_llamas_pregnant_with_twins
+  result: total_pregnant_llamas
+  result_unit: llamas
+  result_grand_unit: llamas
+  reported_expr: 9 + 5 = 14
+step5:
+  expr: total_calves + total_pregnant_llamas
+  result: total_llamas_before_trade
+  result_unit: llamas
+  result_grand_unit: llamas
+  reported_expr: 19 + 14 = 33
+step6:
+  expr: total_llamas_before_trade - calves_traded + new_adult_llamas
+  result: total_llamas_after_trade
+  result_unit: llamas
+  result_grand_unit: llamas
+  reported_expr: 33 - 8 + 2 = 27
+step7:
+  expr: total_llamas_after_trade * fraction_sold_at_market
+  result: total_llamas_sold
+  result_unit: llamas
+  result_grand_unit: llamas
+  reported_expr: 27.0000000000000000 * 0.3333333333333333 = 8.9999999999999991
+step8:
+  expr: total_llamas_after_trade - total_llamas_sold
+  result: total_llamas
+  result_unit: llamas
+  result_grand_unit: llamas
+  reported_expr: 27.000000000000000 - 8.999999999999998 = 18.000000000000002","carmela_money:
+  value: 7
+  unit: dollars
+  location: input
+  grand_unit: dollars
+cousin_money:
+  value: 2
+  unit: dollars
+  location: input
+  grand_unit: dollars
+number_of_cousins:
+  value: 4
+  unit: cousins
+  location: input
+  grand_unit: null
+amount_given_to_each_cousin:
+  value: null
+  unit: dollars
+  location: target
+  grand_unit: dollars",Planner,RuntimeError: Solver failed with exit code 1,30.216
+36,"Teresa sells large stuffed animals for three times the price of small stuffed animals. Today, she sold twice as many small stuffed animals as large ones and earned $120 from the sales. Each small stuffed animal costs $4. How many small stuffed animals did she sell?",12,total_small_stuffed_animals_sold,18.666666666666668,no,"Pass ProblemFormalizer
+Pass Planner
+Pass Executor
+Running ProblemFormalizer...
+Running Planner...
+Running Executor...
+Pass Solver",,"small_stuffed_animal_price:
+  value: 4
+  unit: dollars
+  location: input
+  grand_unit: dollars
+large_stuffed_animal_multiplier:
+  value: 3
+  unit: null
+  location: input
+  grand_unit: null
+small_stuffed_animals_sold_multiplier:
+  value: 2
+  unit: null
+  location: input
+  grand_unit: null
+total_earnings:
+  value: 120
+  unit: dollars
+  location: input
+  grand_unit: dollars
+total_small_stuffed_animals_sold:
+  value: null
+  unit: small stuffed animals
+  location: target
+  grand_unit: small stuffed animals","step1:
+  expr: small_stuffed_animal_price * small_stuffed_animals_sold_multiplier
+  result: total_small_stuffed_animal_earnings
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 4 * 2 = 8
+step2:
+  expr: total_earnings - total_small_stuffed_animal_earnings
+  result: total_large_stuffed_animal_earnings
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 120 - 8 = 112
+step3:
+  expr: total_large_stuffed_animal_earnings / (small_stuffed_animal_price * large_stuffed_animal_multiplier)
+  result: total_large_stuffed_animals_sold
+  result_unit: large stuffed animals
+  result_grand_unit: large stuffed animals
+  reported_expr: 112 / (4 * 3) = 9.333333333333333333333333333
+step4:
+  expr: total_large_stuffed_animals_sold * small_stuffed_animals_sold_multiplier
+  result: total_small_stuffed_animals_sold
+  result_unit: small stuffed animals
+  result_grand_unit: small stuffed animals
+  reported_expr: 9.333333333333334 * 2.000000000000000 = 18.666666666666668","small_stuffed_animal_price:
+  value: 4
+  unit: dollars
+  location: input
+  grand_unit: dollars
+  expr: null
+  formalized_expr: null
+large_stuffed_animal_multiplier:
+  value: 3
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+small_stuffed_animals_sold_multiplier:
+  value: 2
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+total_earnings:
+  value: 120
+  unit: dollars
+  location: input
+  grand_unit: dollars
+  expr: null
+  formalized_expr: null
+total_small_stuffed_animals_sold:
+  value: 18.666666666666668
+  unit: small stuffed animals
+  location: target
+  grand_unit: small stuffed animals
+  expr: total_large_stuffed_animals_sold * small_stuffed_animals_sold_multiplier
+  formalized_expr: (total_earnings - small_stuffed_animal_price * small_stuffed_animals_sold_multiplier)
+    / (small_stuffed_animal_price * large_stuffed_animal_multiplier) * small_stuffed_animals_sold_multiplier
+total_small_stuffed_animal_earnings:
+  value: 8
+  unit: dollars
+  location: step1
+  grand_unit: dollars
+  expr: small_stuffed_animal_price * small_stuffed_animals_sold_multiplier
+  formalized_expr: small_stuffed_animal_price * small_stuffed_animals_sold_multiplier
+total_large_stuffed_animal_earnings:
+  value: 112
+  unit: dollars
+  location: step2
+  grand_unit: dollars
+  expr: total_earnings - total_small_stuffed_animal_earnings
+  formalized_expr: total_earnings - small_stuffed_animal_price * small_stuffed_animals_sold_multiplier
+total_large_stuffed_animals_sold:
+  value: 9.333333333333334
+  unit: large stuffed animals
+  location: step3
+  grand_unit: large stuffed animals
+  expr: total_large_stuffed_animal_earnings / (small_stuffed_animal_price * large_stuffed_animal_multiplier)
+  formalized_expr: (total_earnings - small_stuffed_animal_price * small_stuffed_animals_sold_multiplier)
+    / (small_stuffed_animal_price * large_stuffed_animal_multiplier)",,,23.010
+51,Lorie has 2 pieces of $100 bills. He requested to change one piece of the $100 bills into $50 bills. Half of the remaining $100 bill is changed to $10 bills while the rest is changed to $5 bills. How many pieces of bills will she have?,17,,,no,"Pass ProblemFormalizer
+Pass Planner
+Fail Executor
+Running ProblemFormalizer...
+Running Planner...
+Running Executor...",Reason: InsideChecker vẫn còn lỗi sau 5 lần repair. Checker output: Pass InsideChecker,"pieces_of_100_bills:
+  value: 2
+  unit: pieces
+  location: input
+  grand_unit: pieces
+value_of_each_100_bill:
+  value: 100
+  unit: dollars
+  location: input
+  grand_unit: dollars
+value_of_each_50_bill:
+  value: 50
+  unit: dollars
+  location: input
+  grand_unit: dollars
+value_of_each_10_bill:
+  value: 10
+  unit: dollars
+  location: input
+  grand_unit: dollars
+value_of_each_5_bill:
+  value: 5
+  unit: dollars
+  location: input
+  grand_unit: dollars
+fraction_remaining_100_bill_changed_to_10:
+  value: 0.5
+  unit: null
+  location: input
+  grand_unit: null
+total_pieces_of_bills:
+  value: null
+  unit: pieces
+  location: target
+  grand_unit: pieces
+identity_multiplier:
+  value: 1
+  unit: null
+  location: input
+  grand_unit: null","step1:
+  expr: pieces_of_100_bills - identity_multiplier
+  result: remaining_100_bills
+  result_unit: pieces
+  result_grand_unit: pieces
+  reported_expr: 2 - 1 = 1
+step2:
+  expr: remaining_100_bills * fraction_remaining_100_bill_changed_to_10
+  result: changed_to_10_bills
+  result_unit: pieces
+  result_grand_unit: pieces
+  reported_expr: 1.0 * 0.5 = 0.5
+step3:
+  expr: remaining_100_bills - changed_to_10_bills
+  result: changed_to_5_bills
+  result_unit: pieces
+  result_grand_unit: pieces
+  reported_expr: 1.0 - 0.5 = 0.5
+step4:
+  expr: identity_multiplier + changed_to_10_bills + changed_to_5_bills
+  result: total_pieces_of_bills
+  result_unit: pieces
+  result_grand_unit: pieces
+  reported_expr: 1.0 + 0.5 + 0.5 = 2.0","pieces_of_100_bills:
+  value: 2
+  unit: pieces
+  location: input
+  grand_unit: pieces
+  expr: null
+  formalized_expr: null
+value_of_each_100_bill:
+  value: 100
+  unit: dollars
+  location: input
+  grand_unit: dollars
+  expr: null
+  formalized_expr: null
+value_of_each_50_bill:
+  value: 50
+  unit: dollars
+  location: input
+  grand_unit: dollars
+  expr: null
+  formalized_expr: null
+value_of_each_10_bill:
+  value: 10
+  unit: dollars
+  location: input
+  grand_unit: dollars
+  expr: null
+  formalized_expr: null
+value_of_each_5_bill:
+  value: 5
+  unit: dollars
+  location: input
+  grand_unit: dollars
+  expr: null
+  formalized_expr: null
+fraction_remaining_100_bill_changed_to_10:
+  value: 0.5
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+total_pieces_of_bills:
+  value: 2
+  unit: pieces
+  location: target
+  grand_unit: pieces
+  expr: identity_multiplier + changed_to_10_bills + changed_to_5_bills
+  formalized_expr: identity_multiplier + ((pieces_of_100_bills - identity_multiplier)
+    * fraction_remaining_100_bill_changed_to_10) + (pieces_of_100_bills - identity_multiplier)
+    - ((pieces_of_100_bills - identity_multiplier) * fraction_remaining_100_bill_changed_to_10)
+identity_multiplier:
+  value: 1
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+remaining_100_bills:
+  value: 1
+  unit: pieces
+  location: step1
+  grand_unit: pieces
+  expr: pieces_of_100_bills - identity_multiplier
+  formalized_expr: pieces_of_100_bills - identity_multiplier
+changed_to_10_bills:
+  value: 0.5
+  unit: pieces
+  location: step2
+  grand_unit: pieces
+  expr: remaining_100_bills * fraction_remaining_100_bill_changed_to_10
+  formalized_expr: (pieces_of_100_bills - identity_multiplier) * fraction_remaining_100_bill_changed_to_10
+changed_to_5_bills:
+  value: 0.5
+  unit: pieces
+  location: step3
+  grand_unit: pieces
+  expr: remaining_100_bills - changed_to_10_bills
+  formalized_expr: (pieces_of_100_bills - identity_multiplier) - ((pieces_of_100_bills
+    - identity_multiplier) * fraction_remaining_100_bill_changed_to_10)",Executor,RuntimeError: Solver failed with exit code 1,120.753
+75,"Troy had 300 straws. He fed 3/5 of the straws to the adult pigs and an equal number of straws to the piglets. If there were 20 piglets, how many straws did each piglet eat?",6,straws_per_piglet,9,no,"Pass ProblemFormalizer
+Pass Planner
+Pass Executor
+Running ProblemFormalizer...
+Running Planner...
+Running Executor...
+Pass Solver",,"straws:
+  value: 300
+  unit: straws
+  location: input
+  grand_unit: straws
+fraction_fed_to_adult_pigs:
+  value: 0.6
+  unit: null
+  location: input
+  grand_unit: null
+piglets:
+  value: 20
+  unit: piglets
+  location: input
+  grand_unit: piglets
+straws_per_piglet:
+  value: null
+  unit: straws
+  location: target
+  grand_unit: straws","step1:
+  expr: straws * fraction_fed_to_adult_pigs
+  result: straws_fed_to_adult_pigs
+  result_unit: straws
+  result_grand_unit: straws
+  reported_expr: 300.0 * 0.6 = 180.0
+step2:
+  expr: straws_fed_to_adult_pigs
+  result: straws_fed_to_piglets
+  result_unit: straws
+  result_grand_unit: straws
+  reported_expr: 180 = 180
+step3:
+  expr: straws_fed_to_piglets / piglets
+  result: straws_per_piglet
+  result_unit: straws
+  result_grand_unit: straws
+  reported_expr: 180 / 20 = 9","straws:
+  value: 300
+  unit: straws
+  location: input
+  grand_unit: straws
+  expr: null
+  formalized_expr: null
+fraction_fed_to_adult_pigs:
+  value: 0.6
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+piglets:
+  value: 20
+  unit: piglets
+  location: input
+  grand_unit: piglets
+  expr: null
+  formalized_expr: null
+straws_per_piglet:
+  value: 9
+  unit: straws
+  location: target
+  grand_unit: straws
+  expr: straws_fed_to_piglets / piglets
+  formalized_expr: straws * fraction_fed_to_adult_pigs / piglets
+straws_fed_to_adult_pigs:
+  value: 180
+  unit: straws
+  location: step1
+  grand_unit: straws
+  expr: straws * fraction_fed_to_adult_pigs
+  formalized_expr: straws * fraction_fed_to_adult_pigs
+straws_fed_to_piglets:
+  value: 180
+  unit: straws
+  location: step2
+  grand_unit: straws
+  expr: straws_fed_to_adult_pigs
+  formalized_expr: straws * fraction_fed_to_adult_pigs",,,9.138
+76,Three people divided an amount of $1920. The second took $80 more than the first and the third took twice what the second took. Calculate the share of the first one.,420,,,no,"Pass ProblemFormalizer
+Fail Planner
+Running ProblemFormalizer...
+Running Planner...",Reason: step1.expr dùng entity chưa tồn tại hoặc chưa được tạo: ['first_share'],"first_share:
+  value: null
+  unit: dollars
+  location: target
+  grand_unit: dollars
+total_amount:
+  value: 1920
+  unit: dollars
+  location: input
+  grand_unit: dollars
+second_share_more_than_first:
+  value: 80
+  unit: dollars
+  location: input
+  grand_unit: dollars
+third_share_multiplier:
+  value: 2
+  unit: null
+  location: input
+  grand_unit: null","step1:
+  expr: straws * fraction_fed_to_adult_pigs
+  result: straws_fed_to_adult_pigs
+  result_unit: straws
+  result_grand_unit: straws
+  reported_expr: 300.0 * 0.6 = 180.0
+step2:
+  expr: straws_fed_to_adult_pigs
+  result: straws_fed_to_piglets
+  result_unit: straws
+  result_grand_unit: straws
+  reported_expr: 180 = 180
+step3:
+  expr: straws_fed_to_piglets / piglets
+  result: straws_per_piglet
+  result_unit: straws
+  result_grand_unit: straws
+  reported_expr: 180 / 20 = 9","first_share:
+  value: null
+  unit: dollars
+  location: target
+  grand_unit: dollars
+total_amount:
+  value: 1920
+  unit: dollars
+  location: input
+  grand_unit: dollars
+second_share_more_than_first:
+  value: 80
+  unit: dollars
+  location: input
+  grand_unit: dollars
+third_share_multiplier:
+  value: 2
+  unit: null
+  location: input
+  grand_unit: null",Planner,RuntimeError: Solver failed with exit code 1,22.926

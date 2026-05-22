@@ -1,0 +1,305 @@
+index,question,official_answer,target_entity,pipeline_answer,correct,solver_stdout,solver_stderr,problem_entities_yaml,plan_yaml,plan_entities_yaml,error_stage,error,duration_seconds
+38,"Dorothy is 15 years old and wants to go to a museum with her family. Her family consists of her, her younger brother, her parents, and her grandfather. The regular ticket cost is $10. People 18 years old or younger have a discount of 30%. How much money will Dorothy have after this trip, when she currently has $70?",26,money_after_trip,35,no,"Pass ProblemFormalizer
+Pass Planner
+Pass Executor
+Running ProblemFormalizer...
+Running Planner...
+Running Executor...
+Pass Solver",,"dorothy_age:
+  value: 15
+  unit: years
+  location: input
+  grand_unit: null
+younger_brother_age_limit:
+  value: 18
+  unit: years
+  location: input
+  grand_unit: null
+ticket_cost:
+  value: 10
+  unit: dollars
+  location: input
+  grand_unit: dollars
+discount_percentage:
+  value: 0.3
+  unit: null
+  location: input
+  grand_unit: null
+current_money:
+  value: 70
+  unit: dollars
+  location: input
+  grand_unit: dollars
+money_after_trip:
+  value: null
+  unit: dollars
+  location: target
+  grand_unit: dollars
+identity_multiplier:
+  value: 1
+  unit: null
+  location: input
+  grand_unit: null
+self_count:
+  value: 1
+  unit: people
+  location: input
+  grand_unit: people
+sibling_count:
+  value: 1
+  unit: people
+  location: input
+  grand_unit: people
+parents_count:
+  value: 2
+  unit: people
+  location: input
+  grand_unit: people
+grandparents_count:
+  value: 1
+  unit: people
+  location: input
+  grand_unit: people","step1:
+  expr: self_count + sibling_count + parents_count + grandparents_count
+  result: total_people
+  result_unit: people
+  result_grand_unit: people
+  reported_expr: 1 + 1 + 2 + 1 = 5
+step2:
+  expr: ticket_cost * total_people
+  result: total_ticket_cost
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 10 * 5 = 50
+step3:
+  expr: total_ticket_cost * discount_percentage
+  result: total_discount
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 50.0 * 0.3 = 15.0
+step4:
+  expr: total_ticket_cost - total_discount
+  result: discounted_total_ticket_cost
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 50 - 15 = 35
+step5:
+  expr: current_money - discounted_total_ticket_cost
+  result: money_after_trip
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 70 - 35 = 35","dorothy_age:
+  value: 15
+  unit: years
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+younger_brother_age_limit:
+  value: 18
+  unit: years
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+ticket_cost:
+  value: 10
+  unit: dollars
+  location: input
+  grand_unit: dollars
+  expr: null
+  formalized_expr: null
+discount_percentage:
+  value: 0.3
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+current_money:
+  value: 70
+  unit: dollars
+  location: input
+  grand_unit: dollars
+  expr: null
+  formalized_expr: null
+money_after_trip:
+  value: 35
+  unit: dollars
+  location: target
+  grand_unit: dollars
+  expr: current_money - discounted_total_ticket_cost
+  formalized_expr: current_money - (ticket_cost * (self_count + sibling_count + parents_count
+    + grandparents_count)) - ((ticket_cost * (self_count + sibling_count + parents_count
+    + grandparents_count)) * discount_percentage)
+identity_multiplier:
+  value: 1
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+self_count:
+  value: 1
+  unit: people
+  location: input
+  grand_unit: people
+  expr: null
+  formalized_expr: null
+sibling_count:
+  value: 1
+  unit: people
+  location: input
+  grand_unit: people
+  expr: null
+  formalized_expr: null
+parents_count:
+  value: 2
+  unit: people
+  location: input
+  grand_unit: people
+  expr: null
+  formalized_expr: null
+grandparents_count:
+  value: 1
+  unit: people
+  location: input
+  grand_unit: people
+  expr: null
+  formalized_expr: null
+total_people:
+  value: 5
+  unit: people
+  location: step1
+  grand_unit: people
+  expr: self_count + sibling_count + parents_count + grandparents_count
+  formalized_expr: self_count + sibling_count + parents_count + grandparents_count
+total_ticket_cost:
+  value: 50
+  unit: dollars
+  location: step2
+  grand_unit: dollars
+  expr: ticket_cost * total_people
+  formalized_expr: ticket_cost * (self_count + sibling_count + parents_count + grandparents_count)
+total_discount:
+  value: 15
+  unit: dollars
+  location: step3
+  grand_unit: dollars
+  expr: total_ticket_cost * discount_percentage
+  formalized_expr: (ticket_cost * (self_count + sibling_count + parents_count + grandparents_count))
+    * discount_percentage
+discounted_total_ticket_cost:
+  value: 35
+  unit: dollars
+  location: step4
+  grand_unit: dollars
+  expr: total_ticket_cost - total_discount
+  formalized_expr: (ticket_cost * (self_count + sibling_count + parents_count + grandparents_count))
+    - ((ticket_cost * (self_count + sibling_count + parents_count + grandparents_count))
+    * discount_percentage)",,,39.327
+92,"Jill runs a business breeding llamas. Nine of her llamas got pregnant with 1 calf, and 5 of them got pregnant with twins. After they give birth, Jill traded 8 of the calves for 2 new adult llamas. Then she sells 1/3 of her herd at the market. How many total llamas  (calves and adults) does Jill have now?",18,,,no,"Pass ProblemFormalizer
+Fail Planner
+Running ProblemFormalizer...
+Running Planner...","Reason: step5.expr đang tính herd sau birth/trade từ calves và new adult animals nhưng bỏ mất adult animals ban đầu. Tổng herd sau sinh phải gồm original adults + calves, rồi mới trừ calves traded/sold và cộng new adult animals.","jill_llamas_pregnant_with_calves:
+  value: 9
+  unit: llamas
+  location: input
+  grand_unit: llamas
+calves_from_pregnant_llamas:
+  value: 1
+  unit: calves
+  location: input
+  grand_unit: calves
+jill_llamas_pregnant_with_twins:
+  value: 5
+  unit: llamas
+  location: input
+  grand_unit: llamas
+twins_count:
+  value: 2
+  unit: null
+  location: input
+  grand_unit: null
+calves_traded:
+  value: 8
+  unit: calves
+  location: input
+  grand_unit: calves
+new_adult_llamas:
+  value: 2
+  unit: llamas
+  location: input
+  grand_unit: llamas
+fraction_sold_at_market:
+  value: 0.3333333333333333
+  unit: null
+  location: input
+  grand_unit: null
+total_llamas:
+  value: null
+  unit: llamas
+  location: target
+  grand_unit: llamas","step1:
+  expr: grade_5_students * boys_fraction
+  result: boys_count
+  result_unit: students
+  result_grand_unit: students
+  reported_expr: 200.0 * 0.4 = 80.0
+step2:
+  expr: grade_5_students - boys_count
+  result: girls_count
+  result_unit: students
+  result_grand_unit: students
+  reported_expr: 200 - 80 = 120
+step3:
+  expr: girls_count * girls_fraction_in_girl_scout
+  result: girls_in_girl_scout
+  result_unit: students
+  result_grand_unit: students
+  reported_expr: 120.0000000000000000 * 0.6666666666666666 = 79.9999999999999920
+step4:
+  expr: girls_count - girls_in_girl_scout
+  result: girls_not_in_girl_scout
+  result_unit: girls
+  result_grand_unit: girls
+  reported_expr: 120.00000000000000 - 79.99999999999999 = 40.00000000000001","jill_llamas_pregnant_with_calves:
+  value: 9
+  unit: llamas
+  location: input
+  grand_unit: llamas
+calves_from_pregnant_llamas:
+  value: 1
+  unit: calves
+  location: input
+  grand_unit: calves
+jill_llamas_pregnant_with_twins:
+  value: 5
+  unit: llamas
+  location: input
+  grand_unit: llamas
+twins_count:
+  value: 2
+  unit: null
+  location: input
+  grand_unit: null
+calves_traded:
+  value: 8
+  unit: calves
+  location: input
+  grand_unit: calves
+new_adult_llamas:
+  value: 2
+  unit: llamas
+  location: input
+  grand_unit: llamas
+fraction_sold_at_market:
+  value: 0.3333333333333333
+  unit: null
+  location: input
+  grand_unit: null
+total_llamas:
+  value: null
+  unit: llamas
+  location: target
+  grand_unit: llamas",Planner,RuntimeError: Solver failed with exit code 1,43.176
