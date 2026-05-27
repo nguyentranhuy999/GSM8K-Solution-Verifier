@@ -28,8 +28,3 @@ total_cost:
   location: target
   grand_unit: dollars
   source: How much money has she spent on coffee?
-identity_multiplier:
-  value: 1
-  unit: null
-  location: input
-  grand_unit: null

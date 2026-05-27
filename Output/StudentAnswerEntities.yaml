@@ -43,14 +43,6 @@ total_cost:
   formalized_expr: (morning_coffee_price + afternoon_coffee_price) + days
   map: total_cost
   source: How much money has she spent on coffee?
-identity_multiplier:
-  value: 1
-  unit: null
-  location: input
-  grand_unit: null
-  expr: null
-  formalized_expr: null
-  map: identity_multiplier
 intermediate_entity:
   value: 5.5
   unit: dollars
