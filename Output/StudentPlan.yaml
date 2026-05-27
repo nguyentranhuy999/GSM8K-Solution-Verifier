@@ -1,31 +1,13 @@
 step1:
-  expr: parent_token_multiplier * tokens_wasted_ski_ball
-  result: new_tokens
-  result_unit: tokens
-  result_grand_unit: tokens
-  reported_expr: 7 * 7 = 49
+  expr: morning_coffee_price + afternoon_coffee_price
+  result: intermediate_entity
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 3.00 + 2.50 = 5.50
 step2:
-  expr: fraction_wasted_pac_man * initial_tokens
-  result: tokens_wasted_pac_man
-  result_unit: tokens
-  result_grand_unit: tokens
-  reported_expr: 1/3 * 36 = 12
-step3:
-  expr: fraction_wasted_candy_crush * initial_tokens
-  result: tokens_wasted_candy_crush
-  result_unit: tokens
-  result_grand_unit: tokens
-  reported_expr: 1/4 * 36 = 9
-step4:
-  expr: tokens_wasted_pac_man + tokens_wasted_candy_crush + tokens_wasted_ski_ball
-  result: total_spent
-  result_unit: tokens
-  result_grand_unit: tokens
-  reported_expr: 12 + 9 + 7 = 28
-step5:
-  expr: initial_tokens - total_spent + new_tokens
-  result: total_tokens
-  result_unit: tokens
-  result_grand_unit: tokens
-  reported_expr: 36 - 28 + 49 = 57
-target: total_tokens
+  expr: intermediate_entity + days
+  result: total_cost
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 5.50 + 20 = 25.50
+target: total_cost

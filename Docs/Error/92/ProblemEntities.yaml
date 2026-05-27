@@ -1,0 +1,40 @@
+nine_llamas_pregnant_with_calves:
+  value: 9
+  unit: llamas
+  location: input
+  grand_unit: llamas
+calves_from_single_pregnancies:
+  value: 1
+  unit: calves
+  location: input
+  grand_unit: calves
+llamas_pregnant_with_twins:
+  value: 5
+  unit: llamas
+  location: input
+  grand_unit: llamas
+twins_count:
+  value: 2
+  unit: calves
+  location: input
+  grand_unit: calves
+calves_traded:
+  value: 8
+  unit: calves
+  location: input
+  grand_unit: calves
+new_adult_llamas:
+  value: 2
+  unit: llamas
+  location: input
+  grand_unit: llamas
+fraction_sold_at_market:
+  value: 0.3333333333333333
+  unit: null
+  location: input
+  grand_unit: null
+total_llamas:
+  value: null
+  unit: llamas
+  location: target
+  grand_unit: llamas

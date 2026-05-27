@@ -142,12 +142,17 @@ def validate_problem_entities(entities: Dict[str, Any]) -> Dict[str, Dict[str, A
         if location == "target":
             target_count += 1
 
-        normalized[name] = {
+        normalized_entity = {
             "value": normalize_empty(entity.get("value")),
             "unit": normalize_empty(entity.get("unit")),
             "location": location,
             "grand_unit": normalize_empty(entity.get("grand_unit")),
         }
+        source = normalize_empty(entity.get("source"))
+        if source is not None:
+            normalized_entity["source"] = str(source).strip()
+
+        normalized[name] = normalized_entity
 
     if target_count != 1:
         raise PlannerError(f"ProblemEntities phải có đúng 1 target, hiện có {target_count}.")
@@ -166,7 +171,9 @@ def build_system_prompt() -> str:
 Bạn là một Planner sinh kế hoạch giải toán symbolic từ đề bài và danh sách entity đã formalize.
 
 Nhiệm vụ:
-- Sinh các bước tính toán cần thiết để đi từ entity input tới entity target.
+- Giải bài toán từ Đề bài gốc.
+- Dùng ProblemEntities như dictionary các hằng số đã được grounded trong đề: khi lời giải cần một số, dùng tên entity tương ứng thay vì viết số literal.
+- ProblemEntities KHÔNG phải danh sách các biến bắt buộc phải dùng. Không dùng một entity chỉ vì nó tồn tại.
 - Không tự thêm input entity mới không có trong ProblemEntities.
 - Được tạo entity trung gian bằng trường result.
 - Bước cuối cùng phải tạo ra đúng entity target đã có trong ProblemEntities.
@@ -184,17 +191,31 @@ Quy tắc step:
 - result phải là snake_case.
 - expr chỉ được dùng tên entity/result đã có và toán tử đơn giản: +, -, *, /, parentheses.
 - Tuyệt đối không viết số literal trong expr, kể cả 0, 1, 2, 36, 60, 0.5, 1/3, hay số mũ như ** 2.
-- Nếu một hệ số là dữ kiện trong đề, hệ số đó phải là entity input trong ProblemEntities.
+- Nếu lời giải cần một hệ số/dữ kiện số trong đề, hệ số đó phải là entity input trong ProblemEntities.
 - Nếu ProblemEntities có identity_multiplier thì dùng entity này cho hệ số 1 trong các biểu thức như total = base * (identity_multiplier + multiplier), remainder = total * (identity_multiplier - fraction).
 - Nếu cần hệ số trung gian như 1, hãy tạo từ entity đã có. Ví dụ: identity_multiplier = growth_multiplier / growth_multiplier.
-- Nếu cần đổi đơn vị, chỉ dùng đúng tên conversion factor đã có trong ProblemEntities, ví dụ unit_conversion_inches_per_foot.
+- Nếu cần đổi đơn vị trực tiếp từ một entity sang unit khác, tạo một step riêng chỉ có source entity trong expr.
+  Ví dụ: expr: road_length, result: road_length_kilometers, result_unit: kilometers.
+  Không cần viết conversion factor trong expr; Executor sẽ tự dùng unit_conversion_* phù hợp để tính reported_expr/value.
+- Với rate theo thời gian hoặc các phép nhân tổng quát, vẫn dùng conversion factor nếu đó là quan hệ cần tính trong bài.
 - Không tự đặt tên chung chung như conversion_factor nếu tên đó không tồn tại trong ProblemEntities.
 
 Quy tắc không ảo giác:
 - Chỉ dùng entity trong ProblemEntities hoặc result của step trước.
+- Không cần dùng mọi input entity. Entity có thể chỉ là context, paraphrase, summary hoặc constraint của câu chữ.
+- Hãy chọn các entity theo lời giải toán từ đề bài; bỏ qua entity nếu dùng nó sẽ đếm trùng hoặc không cần thiết.
+- ProblemEntities có thể có field source. Đây là binding gốc của số trong đề bài.
+  Khi tên entity và source/problem text có vẻ mâu thuẫn, phải tin source và đề bài hơn tên entity.
+  Tên biến chỉ là handle để viết expr, không phải bằng chứng duy nhất về quan hệ toán học.
 - Không tạo bước không cần thiết.
+- Không tạo bước chỉ copy một entity sang entity khác. Nếu một step đã tính ra
+  giá trị cuối cùng thì đặt result của chính step đó là target.
 - Không đưa value vào Plan.yaml.
 - Không tính toán ra số trong Plan.yaml và không đưa số literal vào expr.
+- Với các source clause dạng "A unit represents B unit", "A unit corresponds to B unit",
+  "A unit is equivalent to B unit", đây là quan hệ tỉ lệ giữa hai đầu của cùng clause.
+  Nếu cần đổi một đại lượng cùng loại với A sang loại B, dùng known_A / scale_A * scale_B.
+  Không được diễn giải B là B_per_A nếu A không phải 1 đơn vị.
 - Không nhân đôi dữ kiện đếm nếu các thành phần đã được liệt kê đầy đủ.
   Ví dụ: "Nancy buys 2 coffees a day", rồi đề cho giá morning coffee và afternoon coffee.
   Khi đó daily cost là morning_coffee_price + afternoon_coffee_price, KHÔNG nhân thêm coffees_per_day.
@@ -449,6 +470,77 @@ TIME_UNITS = {
     "year",
     "years",
 }
+
+UNIT_BASE_ALIASES = {
+    "inch": "inch",
+    "inches": "inch",
+    "foot": "foot",
+    "feet": "foot",
+    "yard": "yard",
+    "yards": "yard",
+    "mile": "mile",
+    "miles": "mile",
+    "millimeter": "millimeter",
+    "millimeters": "millimeter",
+    "centimeter": "centimeter",
+    "centimeters": "centimeter",
+    "meter": "meter",
+    "meters": "meter",
+    "kilometer": "kilometer",
+    "kilometers": "kilometer",
+    "second": "second",
+    "seconds": "second",
+    "minute": "minute",
+    "minutes": "minute",
+    "hour": "hour",
+    "hours": "hour",
+    "day": "day",
+    "days": "day",
+    "week": "week",
+    "weeks": "week",
+    "month": "month",
+    "months": "month",
+    "year": "year",
+    "years": "year",
+    "cent": "cent",
+    "cents": "cent",
+    "dollar": "dollar",
+    "dollars": "dollar",
+    "ounce": "ounce",
+    "ounces": "ounce",
+    "pound": "pound",
+    "pounds": "pound",
+    "ton": "ton",
+    "tons": "ton",
+    "item": "item",
+    "items": "item",
+    "pair": "pair",
+    "pairs": "pair",
+    "dozen": "dozen",
+    "dozens": "dozen",
+}
+
+STANDARD_CONVERSION_FACTORS = [
+    ("inch", "foot", "unit_conversion_inches_per_foot", 12),
+    ("foot", "yard", "unit_conversion_feet_per_yard", 3),
+    ("foot", "mile", "unit_conversion_feet_per_mile", 5280),
+    ("yard", "mile", "unit_conversion_yards_per_mile", 1760),
+    ("millimeter", "centimeter", "unit_conversion_millimeters_per_centimeter", 10),
+    ("centimeter", "meter", "unit_conversion_centimeters_per_meter", 100),
+    ("meter", "kilometer", "unit_conversion_meters_per_kilometer", 1000),
+    ("second", "minute", "unit_conversion_seconds_per_minute", 60),
+    ("minute", "hour", "unit_conversion_minutes_per_hour", 60),
+    ("hour", "day", "unit_conversion_hours_per_day", 24),
+    ("day", "week", "unit_conversion_days_per_week", 7),
+    ("day", "year", "unit_conversion_days_per_year", 365),
+    ("week", "year", "unit_conversion_weeks_per_year", 52),
+    ("month", "year", "unit_conversion_months_per_year", 12),
+    ("cent", "dollar", "unit_conversion_cents_per_dollar", 100),
+    ("ounce", "pound", "unit_conversion_ounces_per_pound", 16),
+    ("pound", "ton", "unit_conversion_pounds_per_ton", 2000),
+    ("item", "pair", "unit_conversion_items_per_pair", 2),
+    ("item", "dozen", "unit_conversion_items_per_dozen", 12),
+]
 
 
 def extract_expr_tokens(expr: str) -> List[str]:
@@ -1848,30 +1940,6 @@ def validate_and_normalize_plan(
             f"result_grand_unit của bước cuối phải khớp target.grand_unit: {target_grand_unit!r}."
         )
 
-    normalize_item_target_result_grand_units(normalized_plan, target_unit, target_grand_unit)
-    normalize_invited_friends_people_units(normalized_plan, problem_entities, problem)
-
-    validate_no_obvious_double_count(normalized_plan, problem_entities)
-    validate_important_scalar_inputs_used(normalized_plan, problem_entities)
-    validate_required_horizon_inputs_used(normalized_plan, problem_entities)
-    validate_matching_rate_inputs_used(normalized_plan, problem_entities)
-    validate_time_rate_conversions_used(normalized_plan, problem_entities)
-    validate_relative_difference_entities_resolved(normalized_plan, problem_entities)
-    validate_percentage_target_uses_scale(normalized_plan, problem_entities)
-    validate_multiplier_not_used_as_additive_total(normalized_plan)
-    validate_no_duplicate_per_input_addition(normalized_plan)
-    validate_discount_group_size_not_applied_to_money(normalized_plan, problem_entities)
-    validate_roommate_equal_split_includes_host(normalized_plan, problem_entities, problem)
-    validate_sales_quantity_multiplier_not_used_as_fixed_count(normalized_plan, problem_entities, problem)
-    validate_bill_change_uses_denominations(normalized_plan, problem_entities, problem)
-    validate_fraction_allocation_not_copied_when_exceeds_total(normalized_plan, problem_entities, problem)
-    validate_family_discount_context_counts_used(normalized_plan, problem_entities, problem)
-    validate_family_age_discount_not_applied_to_all(normalized_plan, problem_entities, problem)
-    validate_herd_after_birth_includes_original_adults(normalized_plan, problem_entities, problem)
-    validate_discount_threshold_not_used_as_quantity(normalized_plan, problem_entities, problem)
-    validate_invited_friends_no_double_host_subtraction(normalized_plan, problem_entities, problem)
-    validate_invited_friends_uses_full_per_person_cost(normalized_plan, problem_entities, problem)
-
     return normalized_plan
 
 
@@ -1913,492 +1981,6 @@ def parse_numeric(value: Any) -> float | int:
     return number
 
 
-def step(
-    expr: str,
-    result: str,
-    result_unit: Any,
-    result_grand_unit: Any,
-) -> Dict[str, Any]:
-    return {
-        "expr": expr,
-        "result": result,
-        "result_unit": result_unit,
-        "result_grand_unit": result_grand_unit,
-    }
-
-
-def input_names(
-    problem_entities: Dict[str, Dict[str, Any]],
-    predicate,
-) -> List[str]:
-    return [
-        name
-        for name, entity in problem_entities.items()
-        if entity.get("location") == "input" and predicate(name, entity)
-    ]
-
-
-def first_input_name(
-    problem_entities: Dict[str, Dict[str, Any]],
-    predicate,
-) -> Optional[str]:
-    names = input_names(problem_entities, predicate)
-    return names[0] if names else None
-
-
-def deterministic_equal_give_each_plan(
-    problem: str,
-    problem_entities: Dict[str, Dict[str, Any]],
-) -> Optional[Dict[str, Dict[str, Any]]]:
-    text = problem.lower()
-    if not re.search(r"\bgive\b.*\beach\b", text) or "same amount" not in text:
-        return None
-    if "identity_multiplier" not in problem_entities:
-        return None
-
-    target_name = target_entity_name(problem_entities)
-    target = problem_entities[target_name]
-    target_terms = entity_name_terms(target_name)
-
-    money_inputs = input_names(
-        problem_entities,
-        lambda name, entity: is_money_unit(entity.get("unit")),
-    )
-    if len(money_inputs) < 2:
-        return None
-
-    receiver_money = next(
-        (
-            name
-            for name in money_inputs
-            if entity_name_terms(name) & target_terms
-        ),
-        None,
-    )
-    if receiver_money is None:
-        receiver_money = money_inputs[1]
-    giver_money = next((name for name in money_inputs if name != receiver_money), None)
-    if giver_money is None:
-        return None
-
-    receiver_count = first_input_name(
-        problem_entities,
-        lambda name, entity: (
-            not is_money_unit(entity.get("unit"))
-            and normalize_empty(entity.get("unit")) is not None
-            and (
-                entity_name_terms(name) & target_terms
-                or entity_name_terms(str(entity.get("unit"))) & target_terms
-            )
-        ),
-    )
-    if receiver_count is None:
-        receiver_count = first_input_name(
-            problem_entities,
-            lambda name, entity: (
-                not is_money_unit(entity.get("unit"))
-                and normalize_empty(entity.get("unit")) is None
-                and ({"count", "number"} & entity_name_terms(name))
-                and (entity_name_terms(name) & target_terms)
-            ),
-        )
-    if receiver_count is None:
-        receiver_count = first_input_name(
-            problem_entities,
-            lambda _name, entity: not is_money_unit(entity.get("unit"))
-            and normalize_empty(entity.get("unit")) is not None,
-        )
-    if receiver_count is None:
-        return None
-
-    return {
-        "step1": step(
-            f"{giver_money} - {receiver_money}",
-            "money_difference",
-            target.get("unit"),
-            target.get("grand_unit"),
-        ),
-        "step2": step(
-            f"{receiver_count} + identity_multiplier",
-            "equalized_people_count",
-            "people",
-            "people",
-        ),
-        "step3": step(
-            "money_difference / equalized_people_count",
-            target_name,
-            target.get("unit"),
-            target.get("grand_unit"),
-        ),
-    }
-
-
-def deterministic_linear_share_plan(
-    problem: str,
-    problem_entities: Dict[str, Dict[str, Any]],
-) -> Optional[Dict[str, Dict[str, Any]]]:
-    text = problem.lower()
-    if not all(word in text for word in ("first", "second", "third")):
-        return None
-    if "identity_multiplier" not in problem_entities:
-        return None
-
-    target_name = target_entity_name(problem_entities)
-    target = problem_entities[target_name]
-    if "first" not in entity_name_terms(target_name):
-        return None
-
-    total_amount = first_input_name(
-        problem_entities,
-        lambda name, entity: is_money_unit(entity.get("unit"))
-        and ({"total", "amount"} & entity_name_terms(name)),
-    )
-    more_than_first = first_input_name(
-        problem_entities,
-        lambda name, entity: is_money_unit(entity.get("unit"))
-        and "more" in entity_name_terms(name)
-        and "first" in entity_name_terms(name),
-    )
-    multiplier = first_input_name(
-        problem_entities,
-        lambda name, entity: normalize_empty(entity.get("unit")) is None
-        and "multiplier" in entity_name_terms(name),
-    )
-    if not total_amount or not more_than_first or not multiplier:
-        return None
-
-    return {
-        "step1": step(
-            f"{more_than_first} * {multiplier}",
-            "third_share_offset",
-            target.get("unit"),
-            target.get("grand_unit"),
-        ),
-        "step2": step(
-            f"{more_than_first} + third_share_offset",
-            "total_share_offset",
-            target.get("unit"),
-            target.get("grand_unit"),
-        ),
-        "step3": step(
-            "identity_multiplier + identity_multiplier",
-            "first_and_second_coefficient",
-            None,
-            None,
-        ),
-        "step4": step(
-            f"first_and_second_coefficient + {multiplier}",
-            "total_share_coefficient",
-            None,
-            None,
-        ),
-        "step5": step(
-            f"{total_amount} - total_share_offset",
-            "amount_after_offsets",
-            target.get("unit"),
-            target.get("grand_unit"),
-        ),
-        "step6": step(
-            "amount_after_offsets / total_share_coefficient",
-            target_name,
-            target.get("unit"),
-            target.get("grand_unit"),
-        ),
-    }
-
-
-def deterministic_sales_multiplier_plan(
-    problem: str,
-    problem_entities: Dict[str, Dict[str, Any]],
-) -> Optional[Dict[str, Dict[str, Any]]]:
-    text = problem.lower()
-    if not re.search(r"\bsold\b", text) or not re.search(r"\bearned\b|\bsales\b", text):
-        return None
-    if not re.search(r"\btimes\s+the\s+price\b", text) or not re.search(r"\btwice\s+as\s+many\b|\btimes\s+as\s+many\b", text):
-        return None
-
-    target_name = target_entity_name(problem_entities)
-    target = problem_entities[target_name]
-    target_terms = entity_name_terms(target_name)
-
-    total_earnings = first_input_name(
-        problem_entities,
-        lambda name, entity: is_money_unit(entity.get("unit"))
-        and ({"total", "earning", "earnings", "sales", "revenue"} & entity_name_terms(name)),
-    )
-    base_price = first_input_name(
-        problem_entities,
-        lambda name, entity: is_money_unit(entity.get("unit"))
-        and ({"price", "cost"} & entity_name_terms(name))
-        and not ({"total", "earning", "earnings", "sales", "revenue"} & entity_name_terms(name)),
-    )
-    price_multiplier = first_input_name(
-        problem_entities,
-        lambda name, entity: normalize_empty(entity.get("unit")) is None
-        and "multiplier" in entity_name_terms(name)
-        and not ({"sold", "quantity", "count", "many"} & entity_name_terms(name)),
-    )
-    quantity_multiplier = first_input_name(
-        problem_entities,
-        lambda name, entity: normalize_empty(entity.get("unit")) is None
-        and "multiplier" in entity_name_terms(name)
-        and ({"sold", "quantity", "count", "many"} & entity_name_terms(name)),
-    )
-    if not total_earnings or not base_price or not price_multiplier or not quantity_multiplier:
-        return None
-
-    return {
-        "step1": step(
-            f"{base_price} * {price_multiplier}",
-            "relative_item_price",
-            "dollars",
-            "dollars",
-        ),
-        "step2": step(
-            f"{base_price} * {quantity_multiplier}",
-            "base_items_value_per_relative_item",
-            "dollars",
-            "dollars",
-        ),
-        "step3": step(
-            "relative_item_price + base_items_value_per_relative_item",
-            "earnings_per_relative_item_group",
-            "dollars",
-            "dollars",
-        ),
-        "step4": step(
-            f"{total_earnings} / earnings_per_relative_item_group",
-            "relative_items_sold",
-            target.get("unit") if not target_terms else "items",
-            target.get("grand_unit"),
-        ),
-        "step5": step(
-            f"relative_items_sold * {quantity_multiplier}",
-            target_name,
-            target.get("unit"),
-            target.get("grand_unit"),
-        ),
-    }
-
-
-def denomination_from_name(name: str) -> Optional[int]:
-    match = re.search(r"(?:^|_)(\d+)(?:_bill|_coin|_dollar|_cent|s?_|$)", name)
-    if match:
-        return int(match.group(1))
-
-    word_values = {
-        "one": 1,
-        "five": 5,
-        "ten": 10,
-        "twenty": 20,
-        "fifty": 50,
-        "hundred": 100,
-    }
-    terms = entity_name_terms(name)
-    for word, value in word_values.items():
-        if word in terms:
-            return value
-    return None
-
-
-def deterministic_bill_change_plan(
-    problem: str,
-    problem_entities: Dict[str, Dict[str, Any]],
-) -> Optional[Dict[str, Dict[str, Any]]]:
-    text = problem.lower()
-    if not re.search(r"\b(?:bill|bills|coin|coins)\b", text):
-        return None
-    if not re.search(r"\b(?:change|changed|requested|convert|converted)\b", text):
-        return None
-    if "identity_multiplier" not in problem_entities:
-        return None
-
-    target_name = target_entity_name(problem_entities)
-    target = problem_entities[target_name]
-    if str(normalize_empty(target.get("unit")) or "").lower() not in {"piece", "pieces"}:
-        return None
-
-    source_count = first_input_name(
-        problem_entities,
-        lambda name, entity: str(normalize_empty(entity.get("unit")) or "").lower() in {"piece", "pieces"}
-        and denomination_from_name(name) is not None,
-    )
-    if not source_count:
-        return None
-    source_denomination = denomination_from_name(source_count)
-
-    denomination_values = {
-        denomination_from_name(name): name
-        for name, entity in problem_entities.items()
-        if entity.get("location") == "input"
-        and is_money_unit(entity.get("unit"))
-        and denomination_from_name(name) is not None
-    }
-    denomination_values = {
-        denomination: name
-        for denomination, name in denomination_values.items()
-        if denomination is not None
-    }
-    if not source_denomination or source_denomination not in denomination_values:
-        return None
-
-    target_denominations = sorted(
-        [denomination for denomination in denomination_values if denomination != source_denomination],
-        reverse=True,
-    )
-    if len(target_denominations) < 3:
-        return None
-
-    first_denomination, fraction_denomination, rest_denomination = target_denominations[:3]
-    fraction_token = first_input_name(
-        problem_entities,
-        lambda name, entity: normalize_empty(entity.get("unit")) is None
-        and ({"fraction", "percent", "percentage"} & entity_name_terms(name)),
-    )
-    if not fraction_token:
-        return None
-
-    source_value = denomination_values[source_denomination]
-    first_value = denomination_values[first_denomination]
-    fraction_value = denomination_values[fraction_denomination]
-    rest_value = denomination_values[rest_denomination]
-
-    return {
-        "step1": step(
-            f"identity_multiplier * {source_value}",
-            "first_changed_bill_amount",
-            "dollars",
-            "dollars",
-        ),
-        "step2": step(
-            f"first_changed_bill_amount / {first_value}",
-            "first_changed_bill_pieces",
-            "pieces",
-            "pieces",
-        ),
-        "step3": step(
-            f"{source_count} - identity_multiplier",
-            "remaining_source_bill_pieces",
-            "pieces",
-            "pieces",
-        ),
-        "step4": step(
-            f"remaining_source_bill_pieces * {source_value}",
-            "remaining_source_bill_amount",
-            "dollars",
-            "dollars",
-        ),
-        "step5": step(
-            f"remaining_source_bill_amount * {fraction_token}",
-            "fraction_changed_amount",
-            "dollars",
-            "dollars",
-        ),
-        "step6": step(
-            f"fraction_changed_amount / {fraction_value}",
-            "fraction_changed_bill_pieces",
-            "pieces",
-            "pieces",
-        ),
-        "step7": step(
-            "remaining_source_bill_amount - fraction_changed_amount",
-            "rest_changed_amount",
-            "dollars",
-            "dollars",
-        ),
-        "step8": step(
-            f"rest_changed_amount / {rest_value}",
-            "rest_changed_bill_pieces",
-            "pieces",
-            "pieces",
-        ),
-        "step9": step(
-            "first_changed_bill_pieces + fraction_changed_bill_pieces + rest_changed_bill_pieces",
-            target_name,
-            target.get("unit"),
-            target.get("grand_unit"),
-        ),
-    }
-
-
-def deterministic_fraction_allocation_plan(
-    problem: str,
-    problem_entities: Dict[str, Dict[str, Any]],
-) -> Optional[Dict[str, Dict[str, Any]]]:
-    text = problem.lower()
-    if not re.search(r"\b(?:fed|gave|given|distributed|shared)\b", text):
-        return None
-
-    target_name = target_entity_name(problem_entities)
-    target = problem_entities[target_name]
-    target_unit = normalize_empty(target.get("unit"))
-    if target_unit is None:
-        return None
-
-    total_resource = first_input_name(
-        problem_entities,
-        lambda name, entity: normalize_empty(entity.get("unit")) == target_unit
-        and "per" not in entity_name_terms(name),
-    )
-    fraction_token = first_input_name(
-        problem_entities,
-        lambda name, entity: normalize_empty(entity.get("unit")) is None
-        and ({"fraction", "percent", "percentage"} & entity_name_terms(name)),
-    )
-    divisor = first_input_name(
-        problem_entities,
-        lambda name, entity: normalize_empty(entity.get("unit")) is not None
-        and normalize_empty(entity.get("unit")) != target_unit
-        and (entity_name_terms(name) & entity_name_terms(target_name)),
-    )
-    if not total_resource or not fraction_token or not divisor:
-        return None
-
-    fraction_value = parse_numeric(problem_entities[fraction_token].get("value"))
-    if float(fraction_value) <= 0.5:
-        return None
-
-    return {
-        "step1": step(
-            f"{total_resource} * {fraction_token}",
-            "allocated_resource_to_first_group",
-            target.get("unit"),
-            target.get("grand_unit"),
-        ),
-        "step2": step(
-            f"{total_resource} - allocated_resource_to_first_group",
-            "remaining_resource_for_target_group",
-            target.get("unit"),
-            target.get("grand_unit"),
-        ),
-        "step3": step(
-            f"remaining_resource_for_target_group / {divisor}",
-            target_name,
-            target.get("unit"),
-            target.get("grand_unit"),
-        ),
-    }
-
-
-def build_deterministic_plan(
-    problem: str,
-    problem_entities: Dict[str, Dict[str, Any]],
-) -> Optional[Dict[str, Dict[str, Any]]]:
-    builders = [
-        deterministic_equal_give_each_plan,
-        deterministic_linear_share_plan,
-        deterministic_sales_multiplier_plan,
-        deterministic_bill_change_plan,
-        deterministic_fraction_allocation_plan,
-    ]
-
-    for builder in builders:
-        plan = builder(problem, problem_entities)
-        if plan:
-            return plan
-    return None
-
-
 def safe_eval_conversion_expr(expr: str, entities: Dict[str, Dict[str, Any]]) -> Optional[float | int]:
     """
     Thử tính value cho các bước đổi đơn vị đơn giản.
@@ -2437,6 +2019,74 @@ def safe_eval_conversion_expr(expr: str, entities: Dict[str, Dict[str, Any]]) ->
     return parse_numeric(result)
 
 
+def unit_base_keys(unit: Any) -> set[str]:
+    unit = normalize_empty(unit)
+    if unit is None:
+        return set()
+    text = str(unit).strip().lower().replace("-", "_").replace(" ", "_")
+    return {UNIT_BASE_ALIASES[text]} if text in UNIT_BASE_ALIASES else set()
+
+
+def conversion_factor_for_units(
+    source_unit: Any,
+    result_unit: Any,
+    entities: Dict[str, Dict[str, Any]],
+) -> Optional[Tuple[float | int, str]]:
+    source_bases = unit_base_keys(source_unit)
+    result_bases = unit_base_keys(result_unit)
+    if not source_bases or not result_bases:
+        return None
+
+    for smaller_unit, larger_unit, conversion_name, default_factor in STANDARD_CONVERSION_FACTORS:
+        factor = default_factor
+        if conversion_name in entities:
+            value = normalize_empty(entities[conversion_name].get("value"))
+            if is_number(value):
+                factor = parse_numeric(value)
+
+        if smaller_unit in source_bases and larger_unit in result_bases:
+            return factor, "/"
+        if larger_unit in source_bases and smaller_unit in result_bases:
+            return factor, "*"
+
+    return None
+
+
+def safe_eval_semantic_unit_conversion(
+    step: Dict[str, Any],
+    entities: Dict[str, Dict[str, Any]],
+) -> Optional[float | int]:
+    expr_tokens = extract_expr_tokens(step["expr"])
+    if len(expr_tokens) != 1:
+        return None
+
+    source_name = expr_tokens[0]
+    source = entities.get(source_name)
+    if not source:
+        return None
+
+    source_unit = normalize_empty(source.get("unit"))
+    result_unit = normalize_empty(step.get("result_unit"))
+    if source_unit is None or result_unit is None or source_unit == result_unit:
+        return None
+
+    conversion = conversion_factor_for_units(source_unit, result_unit, entities)
+    if conversion is None:
+        return None
+
+    source_value = normalize_empty(source.get("value"))
+    if not is_number(source_value):
+        return None
+
+    factor, operator = conversion
+    if operator == "/":
+        result = parse_numeric(source_value) / factor
+    else:
+        result = parse_numeric(source_value) * factor
+
+    return parse_numeric(result)
+
+
 def looks_like_unit_conversion(step: Dict[str, Any], existing_entities: Dict[str, Dict[str, Any]]) -> bool:
     """
     Heuristic để nhận diện bước đổi đơn vị.
@@ -2467,8 +2117,7 @@ def looks_like_unit_conversion(step: Dict[str, Any], existing_entities: Dict[str
     if source_unit == result_unit:
         return False
 
-    # Nếu grand unit đổi theo cùng target hoặc unit trực tiếp đổi khác nhau, coi là đổi đơn vị.
-    return True or result_grand_unit is not None
+    return conversion_factor_for_units(source_unit, result_unit, existing_entities) is not None
 
 
 def merge_plan_results_into_plan_entities(
@@ -2490,6 +2139,11 @@ def merge_plan_results_into_plan_entities(
             "unit": normalize_empty(entity.get("unit")),
             "location": entity.get("location"),
             "grand_unit": normalize_empty(entity.get("grand_unit")),
+            **(
+                {"source": str(source).strip()}
+                if (source := normalize_empty(entity.get("source"))) is not None
+                else {}
+            ),
         }
         for name, entity in problem_entities.items()
     }
@@ -2501,7 +2155,7 @@ def merge_plan_results_into_plan_entities(
 
         computed_value: Optional[float | int] = None
         if looks_like_unit_conversion(step, plan_entities):
-            computed_value = safe_eval_conversion_expr(step["expr"], plan_entities)
+            computed_value = safe_eval_semantic_unit_conversion(step, plan_entities)
 
         if result not in plan_entities:
             plan_entities[result] = {
@@ -2537,16 +2191,7 @@ def run() -> None:
         last_validation_error: Optional[Exception] = None
         plan: Optional[Dict[str, Dict[str, Any]]] = None
 
-        deterministic_raw_plan = build_deterministic_plan(problem, problem_entities)
-        if deterministic_raw_plan is not None:
-            try:
-                plan = validate_and_normalize_plan(deterministic_raw_plan, problem_entities, problem=problem)
-            except PlannerError as exc:
-                previous_error = str(exc)
-                last_validation_error = exc
-                plan = None
-
-        for _ in range(max_retries()) if plan is None else range(0):
+        for _ in range(max_retries()):
             raw_response = call_openrouter(
                 problem,
                 problem_entities,

@@ -1,0 +1,18 @@
+step1:
+  expr: lessons_needed - (sessions_per_week * weeks_taken * identity_multiplier)
+  result: remaining_lessons
+  result_unit: lessons
+  result_grand_unit: lessons
+  reported_expr: 40 - (2 * 6 * 1) = 28
+step2:
+  expr: remaining_lessons / sessions_per_week
+  result: remaining_sessions_needed
+  result_unit: sessions
+  result_grand_unit: sessions
+  reported_expr: 28 / 2 = 14
+step3:
+  expr: remaining_sessions_needed / sessions_per_week
+  result: remaining_weeks
+  result_unit: weeks
+  result_grand_unit: weeks
+  reported_expr: 14 / 2 = 7

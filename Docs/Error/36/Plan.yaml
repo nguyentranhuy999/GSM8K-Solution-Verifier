@@ -1,0 +1,30 @@
+step1:
+  expr: small_stuffed_animal_price * large_stuffed_animals_multiplier
+  result: large_stuffed_animal_price
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 4 * 3 = 12
+step2:
+  expr: small_stuffed_animal_price * small_stuffed_animals_multiplier + large_stuffed_animal_price
+  result: total_sales
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 4 * 2 + 12 = 20
+step3:
+  expr: total_sales * identity_multiplier
+  result: total_sales_with_multiplier
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 20 * 1 = 20
+step4:
+  expr: total_earnings - total_sales_with_multiplier
+  result: remaining_earnings
+  result_unit: dollars
+  result_grand_unit: dollars
+  reported_expr: 120 - 20 = 100
+step5:
+  expr: remaining_earnings / small_stuffed_animal_price
+  result: total_small_stuffed_animals_sold
+  result_unit: small_stuffed_animals
+  result_grand_unit: small_stuffed_animals
+  reported_expr: 100 / 4 = 25

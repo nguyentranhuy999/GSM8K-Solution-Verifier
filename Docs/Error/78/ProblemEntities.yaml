@@ -1,0 +1,30 @@
+lessons_needed:
+  value: 40
+  unit: lessons
+  location: input
+  grand_unit: lessons
+session_duration:
+  value: 2
+  unit: hours
+  location: input
+  grand_unit: hours
+sessions_per_week:
+  value: 2
+  unit: sessions
+  location: input
+  grand_unit: sessions
+weeks_taken:
+  value: 6
+  unit: weeks
+  location: input
+  grand_unit: weeks
+remaining_weeks:
+  value: null
+  unit: weeks
+  location: target
+  grand_unit: weeks
+identity_multiplier:
+  value: 1
+  unit: null
+  location: input
+  grand_unit: null

@@ -1,0 +1,29 @@
+ID: 51
+Loại: Sai kết quả
+Stage lỗi: không có
+Target entity: total_pieces_of_bills
+Official answer: 17
+Pipeline answer: 2
+
+Câu hỏi:
+Lorie has 2 pieces of $100 bills. He requested to change one piece of the $100 bills into $50 bills. Half of the remaining $100 bill is changed to $10 bills while the rest is changed to $5 bills. How many pieces of bills will she have?
+
+Chẩn đoán:
+Sai logic Planner do trộn số tờ nguồn và số tờ sau khi đổi tiền.
+
+Plan đổi 1 tờ 100 đô sang 2 tờ 50 đô là đúng, nhưng sau đó tính `remaining_source_bill_pieces = pieces_of_100_bills - first_changed_bill_pieces = 2 - 2 = 0`. Đây là sai đơn vị: phải trừ số tờ 100 đô đã đem đổi, tức `2 - 1 = 1`, không trừ số tờ 50 đô tạo ra.
+
+Gốc lỗi: Planner cần giữ riêng `source_bill_count_changed = 1` và `produced_bill_count = amount / denomination`. Các bài đổi mệnh giá cần validator kiểm tra không trừ count của denomination mới khỏi count của denomination cũ.
+
+Thông tin pipeline:
+stdout:
+Pass ProblemFormalizer
+Pass Planner
+Pass Executor
+Running ProblemFormalizer...
+Running Planner...
+Running Executor...
+Pass Solver
+
+stderr:
+(trống)

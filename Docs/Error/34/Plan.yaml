@@ -1,0 +1,6 @@
+step1:
+  expr: distance_between_towns * miles_per_inch * inch_to_miles_fraction
+  result: actual_distance
+  result_unit: miles
+  result_grand_unit: miles
+  reported_expr: 3.375 * 8.000 * 0.250 = 6.750

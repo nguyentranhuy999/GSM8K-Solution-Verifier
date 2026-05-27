@@ -1,0 +1,99 @@
+mitch_macarons:
+  value: 20
+  unit: macarons
+  location: input
+  grand_unit: macarons
+  expr: null
+  formalized_expr: null
+joshua_macarons_more_than_mitch:
+  value: 6
+  unit: macarons
+  location: input
+  grand_unit: macarons
+  expr: null
+  formalized_expr: null
+miles_macarons_fraction:
+  value: 0.5
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+renz_macarons_fewer_than_miles:
+  value: 1
+  unit: macarons
+  location: input
+  grand_unit: macarons
+  expr: null
+  formalized_expr: null
+fraction_of_miles_macarons:
+  value: 0.75
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+macarons_per_kid:
+  value: 2
+  unit: macarons
+  location: input
+  grand_unit: macarons
+  expr: null
+  formalized_expr: null
+total_kids:
+  value: 58
+  unit: kids
+  location: target
+  grand_unit: kids
+  expr: total_macarons / macarons_per_kid
+  formalized_expr: (mitch_macarons + joshua_macarons_more_than_mitch) + ((mitch_macarons
+    + joshua_macarons_more_than_mitch) / miles_macarons_fraction) + ((((mitch_macarons
+    + joshua_macarons_more_than_mitch) / miles_macarons_fraction) * fraction_of_miles_macarons)
+    - renz_macarons_fewer_than_miles) / macarons_per_kid
+identity_multiplier:
+  value: 1
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+total_macarons_mitch_joshua:
+  value: 26
+  unit: macarons
+  location: step1
+  grand_unit: macarons
+  expr: mitch_macarons + joshua_macarons_more_than_mitch
+  formalized_expr: mitch_macarons + joshua_macarons_more_than_mitch
+miles_macarons:
+  value: 52
+  unit: macarons
+  location: step2
+  grand_unit: macarons
+  expr: total_macarons_mitch_joshua / miles_macarons_fraction
+  formalized_expr: (mitch_macarons + joshua_macarons_more_than_mitch) / miles_macarons_fraction
+renz_macarons_base:
+  value: 39
+  unit: macarons
+  location: step3
+  grand_unit: macarons
+  expr: miles_macarons * fraction_of_miles_macarons
+  formalized_expr: ((mitch_macarons + joshua_macarons_more_than_mitch) / miles_macarons_fraction)
+    * fraction_of_miles_macarons
+renz_macarons:
+  value: 38
+  unit: macarons
+  location: step4
+  grand_unit: macarons
+  expr: renz_macarons_base - renz_macarons_fewer_than_miles
+  formalized_expr: (((mitch_macarons + joshua_macarons_more_than_mitch) / miles_macarons_fraction)
+    * fraction_of_miles_macarons) - renz_macarons_fewer_than_miles
+total_macarons:
+  value: 116
+  unit: macarons
+  location: step5
+  grand_unit: macarons
+  expr: total_macarons_mitch_joshua + miles_macarons + renz_macarons
+  formalized_expr: (mitch_macarons + joshua_macarons_more_than_mitch) + ((mitch_macarons
+    + joshua_macarons_more_than_mitch) / miles_macarons_fraction) + ((((mitch_macarons
+    + joshua_macarons_more_than_mitch) / miles_macarons_fraction) * fraction_of_miles_macarons)
+    - renz_macarons_fewer_than_miles)

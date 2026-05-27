@@ -1,0 +1,24 @@
+ID: 89
+Loại: Lỗi pipeline
+Stage lỗi: ProblemFormalizer
+Target entity: không có
+Official answer: 540
+Pipeline answer: không có
+
+Câu hỏi:
+If the price of a bag of cherries is $5 when the price of a bag of olives is $7, how much would Jordyn pay for buying 50 bags of each fruit and a 10% discount?
+
+Chẩn đoán:
+Lỗi ProblemFormalizer/validator do chưa xử lý lượng phân phối `each fruit`.
+
+Validator báo `bags_of_olives.value = 50` không phải số được nêu trực tiếp. Nhưng câu `buying 50 bags of each fruit` cho phép suy ra 50 bags cho cherries và 50 bags cho olives.
+
+Gốc lỗi: rule direct value hiện quá local/literal, chưa lan truyền định lượng từ cấu trúc `each`, `each of`, `both`, `per fruit/category`. Nên biểu diễn generic hơn là `bags_per_fruit = 50`, rồi Planner dùng cho từng loại.
+
+Thông tin pipeline:
+stdout:
+Fail ProblemFormalizer
+Running ProblemFormalizer...
+
+stderr:
+Reason: bags_of_olives.value=50 không phải số được nêu trực tiếp trong đề.

@@ -1,0 +1,26 @@
+ID: 41
+Loại: Lỗi pipeline
+Stage lỗi: Planner
+Target entity: không có
+Official answer: 31
+Pipeline answer: không có
+
+Câu hỏi:
+Becky, Jake, and Silvia shared 4 pizzas. Each pizza had 8 slices. Becky ate 3 more slices than Jake did. Silvia ate twice as many slices than Jake did. If Becky ate 10 slices, how many total slices did they eat?
+
+Chẩn đoán:
+Lỗi Planner do tham chiếu biến chưa tồn tại.
+
+Validator báo `step2.expr` dùng `jake_slices` trước khi tạo. Đề cho Becky ăn 10 và Becky ăn nhiều hơn Jake 3 lát, nên phải tạo `jake_slices = becky_slices - 3` trước, sau đó `silvia_slices = 2 * jake_slices`, rồi cộng ba người.
+
+Gốc lỗi: Planner chưa ép thứ tự tạo biến phụ thuộc trước khi dùng, dù validator đã bắt được lỗi undefined entity.
+
+Thông tin pipeline:
+stdout:
+Pass ProblemFormalizer
+Fail Planner
+Running ProblemFormalizer...
+Running Planner...
+
+stderr:
+Reason: step2.expr dùng entity chưa tồn tại hoặc chưa được tạo: ['jake_slices']

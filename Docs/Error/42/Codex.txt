@@ -1,0 +1,26 @@
+ID: 42
+Loại: Lỗi pipeline
+Stage lỗi: Planner
+Target entity: không có
+Official answer: 20
+Pipeline answer: không có
+
+Câu hỏi:
+Hannah wants to save $80 for five weeks. In the first week, she saved $4 and she plans to save twice as much as her savings as the previous week. How much will she save in the fifth week to reach her goal?
+
+Chẩn đoán:
+Lỗi Planner do dùng target trước khi tạo và hiểu chưa đúng bước điều chỉnh cuối.
+
+Validator báo một step tham chiếu `fifth_week_savings` trước khi tạo target. Bài này có chuỗi tiết kiệm tăng gấp đôi từ tuần 1, nhưng câu hỏi hỏi tuần thứ năm để đạt mục tiêu 80. Vì tổng bốn tuần đầu là 4 + 8 + 16 + 32 = 60, tuần 5 phải là `80 - 60 = 20`.
+
+Gốc lỗi: Planner cần tách recurrence đã biết với bước final adjustment theo mục tiêu, và không được đưa target vào expr trước khi bước cuối tạo target.
+
+Thông tin pipeline:
+stdout:
+Pass ProblemFormalizer
+Fail Planner
+Running ProblemFormalizer...
+Running Planner...
+
+stderr:
+Reason: step4.expr đang tham chiếu target 'fifth_week_savings' trước khi tạo ra nó. Nếu target là ẩn trong phương trình, phải biến đổi algebra để bước cuối mới tạo target. Ví dụ equalization/give-to-each: target = (giver_money - receiver_money) / (receiver_count + identity_multiplier). Ví dụ linear shares: gom coefficient và offset rồi target = (total - offset) / coefficient.

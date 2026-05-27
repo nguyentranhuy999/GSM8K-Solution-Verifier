@@ -60,6 +60,77 @@ DEFAULT_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MAX_TOKENS = 4096
 DEFAULT_MAX_REPAIR_ITERATIONS = 5
 
+UNIT_BASE_ALIASES = {
+    "inch": "inch",
+    "inches": "inch",
+    "foot": "foot",
+    "feet": "foot",
+    "yard": "yard",
+    "yards": "yard",
+    "mile": "mile",
+    "miles": "mile",
+    "millimeter": "millimeter",
+    "millimeters": "millimeter",
+    "centimeter": "centimeter",
+    "centimeters": "centimeter",
+    "meter": "meter",
+    "meters": "meter",
+    "kilometer": "kilometer",
+    "kilometers": "kilometer",
+    "second": "second",
+    "seconds": "second",
+    "minute": "minute",
+    "minutes": "minute",
+    "hour": "hour",
+    "hours": "hour",
+    "day": "day",
+    "days": "day",
+    "week": "week",
+    "weeks": "week",
+    "month": "month",
+    "months": "month",
+    "year": "year",
+    "years": "year",
+    "cent": "cent",
+    "cents": "cent",
+    "dollar": "dollar",
+    "dollars": "dollar",
+    "ounce": "ounce",
+    "ounces": "ounce",
+    "pound": "pound",
+    "pounds": "pound",
+    "ton": "ton",
+    "tons": "ton",
+    "item": "item",
+    "items": "item",
+    "pair": "pair",
+    "pairs": "pair",
+    "dozen": "dozen",
+    "dozens": "dozen",
+}
+
+STANDARD_CONVERSION_FACTORS = [
+    ("inch", "foot", "unit_conversion_inches_per_foot", Decimal("12")),
+    ("foot", "yard", "unit_conversion_feet_per_yard", Decimal("3")),
+    ("foot", "mile", "unit_conversion_feet_per_mile", Decimal("5280")),
+    ("yard", "mile", "unit_conversion_yards_per_mile", Decimal("1760")),
+    ("millimeter", "centimeter", "unit_conversion_millimeters_per_centimeter", Decimal("10")),
+    ("centimeter", "meter", "unit_conversion_centimeters_per_meter", Decimal("100")),
+    ("meter", "kilometer", "unit_conversion_meters_per_kilometer", Decimal("1000")),
+    ("second", "minute", "unit_conversion_seconds_per_minute", Decimal("60")),
+    ("minute", "hour", "unit_conversion_minutes_per_hour", Decimal("60")),
+    ("hour", "day", "unit_conversion_hours_per_day", Decimal("24")),
+    ("day", "week", "unit_conversion_days_per_week", Decimal("7")),
+    ("day", "year", "unit_conversion_days_per_year", Decimal("365")),
+    ("week", "year", "unit_conversion_weeks_per_year", Decimal("52")),
+    ("month", "year", "unit_conversion_months_per_year", Decimal("12")),
+    ("cent", "dollar", "unit_conversion_cents_per_dollar", Decimal("100")),
+    ("ounce", "pound", "unit_conversion_ounces_per_pound", Decimal("16")),
+    ("pound", "ton", "unit_conversion_pounds_per_ton", Decimal("2000")),
+    ("item", "pair", "unit_conversion_items_per_pair", Decimal("2")),
+    ("item", "dozen", "unit_conversion_items_per_dozen", Decimal("12")),
+]
+
 
 class ExecutorError(Exception):
     """Lỗi riêng cho Executor."""
@@ -289,6 +360,87 @@ def replace_names_with_values(expr: str, entities: Dict[str, Dict[str, Any]]) ->
     return re.sub(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", repl, expr)
 
 
+def normalize_unit_text(unit: Any) -> Optional[str]:
+    unit = normalize_empty(unit)
+    if unit is None:
+        return None
+    return str(unit).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def unit_base_keys(unit: Any) -> Set[str]:
+    text = normalize_unit_text(unit)
+    if not text:
+        return set()
+    candidates = {text}
+    return {
+        UNIT_BASE_ALIASES[candidate]
+        for candidate in candidates
+        if candidate in UNIT_BASE_ALIASES
+    }
+
+
+def find_conversion_factor(
+    source_unit: Any,
+    result_unit: Any,
+    entities: Dict[str, Dict[str, Any]],
+) -> Optional[Tuple[Decimal, str, str]]:
+    source_bases = unit_base_keys(source_unit)
+    result_bases = unit_base_keys(result_unit)
+    if not source_bases or not result_bases:
+        return None
+
+    for smaller_unit, larger_unit, conversion_name, default_factor in STANDARD_CONVERSION_FACTORS:
+        if conversion_name in entities:
+            factor = to_decimal(entities[conversion_name].get("value"), name=f"{conversion_name}.value")
+        else:
+            factor = default_factor
+
+        if smaller_unit in source_bases and larger_unit in result_bases:
+            return factor, "/", conversion_name
+        if larger_unit in source_bases and smaller_unit in result_bases:
+            return factor, "*", conversion_name
+
+    return None
+
+
+def semantic_unit_conversion(
+    step: Dict[str, Any],
+    entities: Dict[str, Dict[str, Any]],
+) -> Optional[Tuple[str, Decimal, str, str]]:
+    tokens = expr_tokens(step["expr"])
+    if len(tokens) != 1:
+        return None
+
+    source_name = tokens[0]
+    source = entities.get(source_name)
+    if not source:
+        return None
+
+    source_unit = normalize_empty(source.get("unit"))
+    result_unit = normalize_empty(step.get("result_unit"))
+    if source_unit is None or result_unit is None or source_unit == result_unit:
+        return None
+
+    conversion = find_conversion_factor(source_unit, result_unit, entities)
+    if conversion is None:
+        return None
+
+    factor, operator, conversion_name = conversion
+    source_value = to_decimal(source.get("value"), name=f"{source_name}.value")
+    if operator == "/":
+        if factor == 0:
+            raise ExecutorError(f"Conversion factor {conversion_name} bằng 0.")
+        result_value = source_value / factor
+        numeric_expr = f"{format_decimal(source_value)} / {format_decimal(factor)}"
+        formalized_expr = f"{source_name} / {conversion_name}"
+    else:
+        result_value = source_value * factor
+        numeric_expr = f"{format_decimal(source_value)} * {format_decimal(factor)}"
+        formalized_expr = f"{source_name} * {conversion_name}"
+
+    return numeric_expr, normalize_decimal(result_value), formalized_expr, conversion_name
+
+
 def values_for_expr(expr: str, entities: Dict[str, Dict[str, Any]]) -> Dict[str, Decimal]:
     values: Dict[str, Decimal] = {}
     for token in sorted(set(expr_tokens(expr))):
@@ -356,7 +508,7 @@ def validate_and_normalize_entities(raw_entities: Dict[str, Any]) -> Dict[str, D
 
     normalized: Dict[str, Dict[str, Any]] = {}
     base_fields = {"value", "unit", "location", "grand_unit"}
-    optional_fields = {"expr", "formalized_expr"}
+    optional_fields = {"expr", "formalized_expr", "source", "map"}
 
     for name, entity in raw_entities.items():
         validate_entity_name(name)
@@ -371,7 +523,7 @@ def validate_and_normalize_entities(raw_entities: Dict[str, Any]) -> Dict[str, D
         if extra:
             raise ExecutorError(f"Entity {name} có trường thừa: {sorted(extra)}")
 
-        normalized[name] = {
+        normalized_entity = {
             "value": normalize_empty(entity.get("value")),
             "unit": normalize_empty(entity.get("unit")),
             "location": normalize_empty(entity.get("location")),
@@ -379,8 +531,105 @@ def validate_and_normalize_entities(raw_entities: Dict[str, Any]) -> Dict[str, D
             "expr": normalize_empty(entity.get("expr")),
             "formalized_expr": normalize_empty(entity.get("formalized_expr")),
         }
+        source = normalize_empty(entity.get("source"))
+        if source is not None:
+            normalized_entity["source"] = str(source).strip()
+
+        normalized[name] = normalized_entity
 
     return normalized
+
+
+def single_entity_expr(expr: Any) -> Optional[str]:
+    expr = normalize_empty(expr)
+    if not isinstance(expr, str):
+        return None
+    expr = expr.strip()
+    tokens = expr_tokens(expr)
+    if len(tokens) != 1:
+        return None
+    token = tokens[0]
+    if expr == token:
+        return token
+    return None
+
+
+def target_entity_name(entities: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    targets = [name for name, entity in entities.items() if entity.get("location") == "target"]
+    if len(targets) != 1:
+        return None
+    return targets[0]
+
+
+def collapse_target_passthrough_step(
+    plan: Dict[str, Dict[str, Any]],
+    entities: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Xóa bước cuối kiểu alias:
+
+    step2: expr: daily_cost * days, result: total_daily_cost
+    step3: expr: total_daily_cost, result: total_cost
+
+    thành:
+
+    step2: expr: daily_cost * days, result: total_cost
+
+    Đây chỉ là cleanup cấu trúc; không thay đổi phép tính.
+    """
+    steps = list(plan.keys())
+    if len(steps) < 2:
+        return plan
+
+    final_step_name = steps[-1]
+    previous_step_name = steps[-2]
+    final_step = plan[final_step_name]
+    previous_step = plan[previous_step_name]
+
+    target_name = target_entity_name(entities)
+    if not target_name or final_step.get("result") != target_name:
+        return plan
+
+    source_name = single_entity_expr(final_step.get("expr"))
+    if not source_name or previous_step.get("result") != source_name:
+        return plan
+
+    if normalize_empty(previous_step.get("result_unit")) != normalize_empty(final_step.get("result_unit")):
+        return plan
+    if normalize_empty(previous_step.get("result_grand_unit")) != normalize_empty(final_step.get("result_grand_unit")):
+        return plan
+
+    collapsed = deepcopy(plan)
+    collapsed[previous_step_name]["result"] = target_name
+    collapsed[previous_step_name]["result_unit"] = final_step.get("result_unit")
+    collapsed[previous_step_name]["result_grand_unit"] = final_step.get("result_grand_unit")
+    collapsed.pop(final_step_name, None)
+    return collapsed
+
+
+def prune_stale_step_entities(
+    entities: Dict[str, Dict[str, Any]],
+    plan: Dict[str, Dict[str, Any]],
+    problem_entity_names: Set[str],
+) -> Dict[str, Dict[str, Any]]:
+    result_names = {step["result"] for step in plan.values()}
+    referenced_names: Set[str] = set()
+    for step in plan.values():
+        referenced_names.update(expr_tokens(step["expr"]))
+
+    pruned: Dict[str, Dict[str, Any]] = {}
+    for name, entity in entities.items():
+        if name in problem_entity_names or name in result_names or name in referenced_names:
+            pruned[name] = entity
+            continue
+
+        location = entity.get("location")
+        if isinstance(location, str) and re.fullmatch(r"step\d+", location):
+            continue
+
+        pruned[name] = entity
+
+    return pruned
 
 
 # -----------------------------------------------------------------------------
@@ -445,12 +694,18 @@ def execute_plan_once(
         result_name = step["result"]
         validate_entity_name(result_name)
 
-        # Kiểm tra toàn bộ biến trong expr đã có value.
-        values = values_for_expr(expr, updated_entities)
-        result_value = safe_eval_expr(expr, values)
+        conversion_result = semantic_unit_conversion(step, updated_entities)
+        if conversion_result is not None:
+            numeric_expr, result_value, conversion_formalized_expr, _ = conversion_result
+            min_places = 0
+        else:
+            # Kiểm tra toàn bộ biến trong expr đã có value.
+            values = values_for_expr(expr, updated_entities)
+            result_value = safe_eval_expr(expr, values)
+            numeric_expr = replace_names_with_values(expr, updated_entities)
+            conversion_formalized_expr = None
+            min_places = result_min_decimal_places(expr_tokens(expr), updated_entities)
 
-        numeric_expr = replace_names_with_values(expr, updated_entities)
-        min_places = result_min_decimal_places(expr_tokens(expr), updated_entities)
         formatted_result = format_decimal(result_value, min_decimal_places=min_places)
         step["reported_expr"] = f"{numeric_expr} = {formatted_result}"
 
@@ -477,7 +732,7 @@ def execute_plan_once(
         updated_entities[result_name]["expr"] = expr
         result_expr_by_entity[result_name] = expr
 
-        f_expr = formalize_expr(expr, formalized_by_entity)
+        f_expr = conversion_formalized_expr or formalize_expr(expr, formalized_by_entity)
         updated_entities[result_name]["formalized_expr"] = f_expr
         formalized_by_entity[result_name] = f_expr
 
@@ -553,6 +808,8 @@ def run_inside_checker() -> Tuple[bool, str]:
     ):
         return True, output.strip()
 
+    if error_text:
+        output = (output.strip() + "\n" if output.strip() else "") + f"Error.yaml:\n{error_text}"
     return False, output.strip()
 
 
@@ -599,6 +856,7 @@ entity_name:
   unit: dollars              # hoặc null
   location: input|target|step1|step2|...
   grand_unit: dollars        # hoặc null
+  source: "source phrase"    # optional, chỉ có ở entity lấy từ ProblemEntities
   expr: entity_a + entity_b  # input thì null
   formalized_expr: ...       # input thì null
 
@@ -606,12 +864,20 @@ Quy tắc quan trọng:
 - Plan step phải liên tục: step1, step2, ...
 - Expr chỉ dùng entity đã có trong PlanEntities hoặc result từ step trước.
 - Bước cuối phải tạo ra target nếu target đang tồn tại trong PlanEntities.
+- Không tạo bước chỉ copy một entity sang entity khác. Nếu một step đã tính ra
+  giá trị cuối cùng, đặt result của chính step đó là target.
 - Không tự thêm dữ kiện input mới không có trong đề.
-- Không sửa value/unit/location/grand_unit của bất kỳ entity nào đến từ ProblemEntities.yaml.
+- Không sửa value/unit/location/grand_unit/source của bất kỳ entity nào đến từ ProblemEntities.yaml.
   Các input entity và target schema là bất biến; chỉ được sửa step/result trung gian và Plan.yaml.
 - Có thể sửa result_unit/result_grand_unit nếu sai.
 - Nếu đổi tên result trong Plan.yaml thì phải đồng bộ PlanEntities.yaml.
 - Với input entity, expr và formalized_expr phải là null.
+
+Ý nghĩa một số lỗi trong Error.yaml:
+- double count: một step đang nhân lại một count/entity tổng hợp sau khi step trước đã cộng
+  các component cùng loại. Cần sửa plan để không đếm trùng. Ví dụ nếu daily_cost đã bằng
+  morning_price + afternoon_price, không được nhân daily_cost thêm với coffees_per_day nếu
+  coffees_per_day chỉ tóm tắt hai ly đó.
 
 Output bắt buộc là một YAML object có đúng 2 key:
 Plan.yaml:
@@ -720,6 +986,8 @@ def load_and_execute_current_files() -> None:
     raw_entities = read_yaml_file(PLAN_ENTITIES_PATH, required=True)
     raw_problem_entities = read_yaml_file(PROBLEM_ENTITIES_PATH, required=False)
 
+    problem_entity_names = set(raw_problem_entities.keys())
+
     for name, fields in raw_problem_entities.items():
         if not isinstance(fields, dict):
             continue
@@ -727,8 +995,10 @@ def load_and_execute_current_files() -> None:
 
     plan = validate_and_normalize_plan(raw_plan)
     entities = validate_and_normalize_entities(raw_entities)
+    plan = collapse_target_passthrough_step(plan, entities)
 
     updated_plan, updated_entities = execute_plan_once(plan, entities)
+    updated_entities = prune_stale_step_entities(updated_entities, updated_plan, problem_entity_names)
 
     write_yaml_file(PLAN_PATH, updated_plan)
     write_yaml_file(PLAN_ENTITIES_PATH, updated_entities)

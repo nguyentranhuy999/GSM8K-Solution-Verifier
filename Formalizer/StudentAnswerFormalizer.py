@@ -430,6 +430,7 @@ def normalize_step_fields(step_name: str, step: Dict[str, Any]) -> Dict[str, Any
 def validate_and_normalize_student_plan(
     raw_plan: Dict[str, Any],
     problem_entities: Dict[str, Any],
+    student_answer: Optional[str] = None,
 ) -> Dict[str, Any]:
     if not raw_plan:
         raise StudentAnswerFormalizerError("StudentPlan.yaml đang rỗng.")
@@ -471,6 +472,8 @@ def validate_and_normalize_student_plan(
         )
 
     normalized["target"] = target.strip()
+    if student_answer:
+        apply_reported_expr_unit_hints(normalized, student_answer)
     return normalized
 
 
@@ -521,8 +524,12 @@ def validate_reported_expr_grounded_in_student_answer(
             )
 
 
+CURRENCY_SYMBOL_RE = r"[$€£¥]"
+
+
 def normalize_arithmetic_text(text: str) -> str:
     text = text.lower()
+    text = re.sub(CURRENCY_SYMBOL_RE, "", text)
     text = re.sub(
         r"(\d+(?:\.\d+)?\s*/\s*\d+(?:\.\d+)?)\s*of\s*(\d+(?:\.\d+)?)",
         r"\1*\2",
@@ -547,31 +554,65 @@ def arithmetic_fingerprint(text: str) -> str:
     return f"{lhs}={rhs}"
 
 
+def equation_strings_from_line(line: str) -> List[str]:
+    if "=" not in line:
+        return []
+
+    line = re.sub(CURRENCY_SYMBOL_RE, "", line)
+    line = line.replace(",", "")
+    line = re.sub(
+        r"(\d+(?:\.\d+)?\s*/\s*\d+(?:\.\d+)?)\s+of\s+(\d+(?:\.\d+)?)",
+        r"\1 * \2",
+        line,
+        flags=re.IGNORECASE,
+    )
+    line = line.replace("×", "*").replace("÷", "/")
+
+    # Giữ phần phép tính quanh dấu "=" và bỏ chữ/đơn vị ở hai bên.
+    equations: List[str] = []
+    allowed = r"0-9.+\-*/()\s"
+    pattern = re.compile(rf"(?<![A-Za-z0-9_])([-+]?\d[{allowed}]*=[\s+\-]*\d[{allowed}]*)")
+    for match in pattern.finditer(line):
+        equation = match.group(1).strip()
+        equation = equation.rstrip(".。;, ")
+        equations.append(equation)
+    return equations
+
+
 def extract_equations_from_student_answer(student_answer: str) -> List[str]:
     equations: List[str] = []
 
     for line in student_answer.splitlines():
-        if "=" not in line:
-            continue
-
-        line = re.sub(
-            r"(\d+(?:\.\d+)?\s*/\s*\d+(?:\.\d+)?)\s+of\s+(\d+(?:\.\d+)?)",
-            r"\1 * \2",
-            line,
-            flags=re.IGNORECASE,
-        )
-
-        # Giữ phần phép tính quanh dấu "=" và bỏ chữ/đơn vị ở hai bên.
-        allowed = r"0-9.,+\-*/×÷()\s"
-        match = re.search(rf"([{allowed}]+=[{allowed}]+)", line)
-        if not match:
-            continue
-
-        equation = match.group(1).strip()
-        equation = equation.rstrip(".。;, ")
-        equations.append(arithmetic_fingerprint(equation))
+        for equation in equation_strings_from_line(line):
+            equations.append(arithmetic_fingerprint(equation))
 
     return equations
+
+
+def reported_expr_unit_hints_from_student_answer(student_answer: str) -> Dict[str, Tuple[str, str]]:
+    hints: Dict[str, Tuple[str, str]] = {}
+    for line in student_answer.splitlines():
+        if not re.search(CURRENCY_SYMBOL_RE, line):
+            continue
+        for equation in equation_strings_from_line(line):
+            hints[arithmetic_fingerprint(equation)] = ("dollars", "dollars")
+    return hints
+
+
+def apply_reported_expr_unit_hints(student_plan: Dict[str, Any], student_answer: str) -> None:
+    hints = reported_expr_unit_hints_from_student_answer(student_answer)
+    if not hints:
+        return
+
+    for step_name, step in student_plan.items():
+        if not step_name.startswith("step"):
+            continue
+        hint = hints.get(arithmetic_fingerprint(str(step.get("reported_expr", ""))))
+        if not hint:
+            continue
+        result_unit, result_grand_unit = hint
+        step["result_unit"] = result_unit
+        step["result_grand_unit"] = result_grand_unit
 
 
 def validate_reported_exprs_follow_student_answer(
@@ -627,6 +668,11 @@ def validate_problem_entities(raw_entities: Dict[str, Any]) -> Dict[str, Dict[st
             "unit": normalize_empty(entity.get("unit")),
             "location": normalize_empty(entity.get("location")),
             "grand_unit": normalize_empty(entity.get("grand_unit")),
+            **(
+                {"source": str(source).strip()}
+                if (source := normalize_empty(entity.get("source"))) is not None
+                else {}
+            ),
         }
     return normalized
 
@@ -744,6 +790,11 @@ def initial_student_entities(problem_entities: Dict[str, Dict[str, Any]]) -> Dic
             "unit": normalize_empty(entity.get("unit")),
             "location": normalize_empty(entity.get("location")),
             "grand_unit": normalize_empty(entity.get("grand_unit")),
+            **(
+                {"source": str(source).strip()}
+                if (source := normalize_empty(entity.get("source"))) is not None
+                else {}
+            ),
             "expr": normalize_empty(entity.get("expr")),
             "formalized_expr": normalize_empty(entity.get("formalized_expr")),
         }
@@ -838,7 +889,11 @@ def run() -> None:
 
             try:
                 raw_student_plan, raw_diagnosis = parse_llm_output(raw_response)
-                candidate_plan = validate_and_normalize_student_plan(raw_student_plan, problem_entities)
+                candidate_plan = validate_and_normalize_student_plan(
+                    raw_student_plan,
+                    problem_entities,
+                    student_answer=student_answer,
+                )
                 validate_reported_expr_grounded_in_student_answer(candidate_plan, student_answer)
                 validate_reported_exprs_follow_student_answer(candidate_plan, student_answer)
             except StudentAnswerFormalizerError as exc:

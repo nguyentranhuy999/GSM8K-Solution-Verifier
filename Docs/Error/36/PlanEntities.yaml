@@ -1,0 +1,75 @@
+small_stuffed_animal_price:
+  value: 4
+  unit: dollars
+  location: input
+  grand_unit: dollars
+  expr: null
+  formalized_expr: null
+total_earnings:
+  value: 120
+  unit: dollars
+  location: input
+  grand_unit: dollars
+  expr: null
+  formalized_expr: null
+small_stuffed_animals_multiplier:
+  value: 2
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+large_stuffed_animals_multiplier:
+  value: 3
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+total_small_stuffed_animals_sold:
+  value: 25
+  unit: small_stuffed_animals
+  location: target
+  grand_unit: small_stuffed_animals
+  expr: remaining_earnings / small_stuffed_animal_price
+  formalized_expr: (total_earnings - ((small_stuffed_animal_price * small_stuffed_animals_multiplier
+    + small_stuffed_animal_price * large_stuffed_animals_multiplier) * identity_multiplier))
+    / small_stuffed_animal_price
+identity_multiplier:
+  value: 1
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+large_stuffed_animal_price:
+  value: 12
+  unit: dollars
+  location: step1
+  grand_unit: dollars
+  expr: small_stuffed_animal_price * large_stuffed_animals_multiplier
+  formalized_expr: small_stuffed_animal_price * large_stuffed_animals_multiplier
+total_sales:
+  value: 20
+  unit: dollars
+  location: step2
+  grand_unit: dollars
+  expr: small_stuffed_animal_price * small_stuffed_animals_multiplier + large_stuffed_animal_price
+  formalized_expr: small_stuffed_animal_price * small_stuffed_animals_multiplier +
+    small_stuffed_animal_price * large_stuffed_animals_multiplier
+total_sales_with_multiplier:
+  value: 20
+  unit: dollars
+  location: step3
+  grand_unit: dollars
+  expr: total_sales * identity_multiplier
+  formalized_expr: (small_stuffed_animal_price * small_stuffed_animals_multiplier
+    + small_stuffed_animal_price * large_stuffed_animals_multiplier) * identity_multiplier
+remaining_earnings:
+  value: 100
+  unit: dollars
+  location: step4
+  grand_unit: dollars
+  expr: total_earnings - total_sales_with_multiplier
+  formalized_expr: total_earnings - ((small_stuffed_animal_price * small_stuffed_animals_multiplier
+    + small_stuffed_animal_price * large_stuffed_animals_multiplier) * identity_multiplier)

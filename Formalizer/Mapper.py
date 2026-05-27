@@ -128,7 +128,7 @@ def normalize_entities(raw_entities: Dict[str, Any], *, file_label: str) -> Dict
         raise MapperError(f"{file_label} đang rỗng.")
 
     required = {"value", "unit", "location", "grand_unit"}
-    optional = {"expr", "formalized_expr", "map"}
+    optional = {"expr", "formalized_expr", "map", "source"}
     normalized: Dict[str, Dict[str, Any]] = {}
 
     for name, entity in raw_entities.items():
@@ -144,7 +144,7 @@ def normalize_entities(raw_entities: Dict[str, Any], *, file_label: str) -> Dict
         if extra:
             raise MapperError(f"Entity {name} trong {file_label} có trường thừa: {sorted(extra)}")
 
-        normalized[name] = {
+        normalized_entity = {
             "value": normalize_empty(entity.get("value")),
             "unit": normalize_empty(entity.get("unit")),
             "location": normalize_empty(entity.get("location")),
@@ -153,6 +153,11 @@ def normalize_entities(raw_entities: Dict[str, Any], *, file_label: str) -> Dict
             "formalized_expr": normalize_empty(entity.get("formalized_expr")),
             "map": normalize_empty(entity.get("map")),
         }
+        source = normalize_empty(entity.get("source"))
+        if source is not None:
+            normalized_entity["source"] = str(source).strip()
+
+        normalized[name] = normalized_entity
 
     return normalized
 
@@ -246,9 +251,6 @@ def canonical_ast(node: ast.AST) -> Any:
 
     if isinstance(node, ast.Constant):
         return ("Const", str(node.value))
-
-    if isinstance(node, ast.Num):  # pragma: no cover
-        return ("Const", str(node.n))
 
     if isinstance(node, ast.UnaryOp):
         return ("Unary", type(node.op).__name__, canonical_ast(node.operand))

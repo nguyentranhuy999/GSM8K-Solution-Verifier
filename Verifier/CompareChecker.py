@@ -287,9 +287,6 @@ def eval_ast_node(node: ast.AST, values: Dict[str, Decimal]) -> Decimal:
             return Decimal(str(node.value))
         raise CompareCheckerError(f"Hằng không hợp lệ: {node.value!r}")
 
-    if isinstance(node, ast.Num):  # pragma: no cover
-        return Decimal(str(node.n))
-
     if isinstance(node, ast.Name):
         if node.id not in values:
             raise CompareCheckerError(f"Thiếu value cho biến {node.id!r}.")
@@ -493,11 +490,17 @@ def check_wrong_relationship(
         plan_entity = plan_entities[mapped_plan_name]
         s_expr = normalize_empty(student_entity.get("expr"))
         p_expr = normalize_empty(plan_entity.get("expr"))
+        s_formalized = normalize_empty(student_entity.get("formalized_expr"))
+        p_formalized = normalize_empty(plan_entity.get("formalized_expr"))
 
         if s_expr is None and p_expr is None:
             continue
         if expressions_textually_same(s_expr, p_expr):
             continue
+        if s_formalized and p_formalized:
+            s_formalized_mapped = replace_student_tokens_with_plan_tokens(s_formalized, student_entities)
+            if equivalent_by_random_substitution(p_formalized, s_formalized_mapped, trials=3):
+                continue
 
         step = find_student_step_by_expr(student_plan, s_expr) or find_student_step_by_result(student_plan, student_name)
         add_diagnosis(diagnosis, "wrong relationship", step=step, entity=student_name)
@@ -530,7 +533,7 @@ def check_different_calculation(
     if not decimal_equal(plan_target_entity.get("value"), student_target_entity.get("value")):
         return
 
-    if equivalent_by_random_substitution(plan_expr, student_expr_mapped, trials=3):
+    if not equivalent_by_random_substitution(plan_expr, student_expr_mapped, trials=3):
         add_diagnosis(diagnosis, "different calculation", entity=student_target)
 
 

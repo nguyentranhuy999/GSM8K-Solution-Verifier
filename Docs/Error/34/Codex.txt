@@ -1,0 +1,33 @@
+ID: 34
+Loại: Sai kết quả
+Stage lỗi: không có
+Target entity: actual_distance
+Official answer: 108
+Pipeline answer: 6.75
+
+Câu hỏi:
+On a road map, 1/4 inch represents 8 miles of actual road distance. The towns of Pence and Hillcrest are represented by points 3 3/8 inches apart on the map. What is the actual distance, in miles, between the towns?
+
+Chẩn đoán:
+Sai logic Planner ở quan hệ scale bản đồ.
+
+ProblemEntities có đủ `inch_to_miles_fraction = 0.25`, `miles_per_inch = 8`, `distance_between_towns = 3.375`. Nhưng Plan dùng:
+`distance_between_towns * miles_per_inch * inch_to_miles_fraction = 6.75`.
+
+Với câu `1/4 inch represents 8 miles`, 8 miles ứng với mỗi 0.25 inch, nên công thức đúng phải là:
+`distance_between_towns / inch_to_miles_fraction * miles_per_inch = 108`.
+
+Gốc lỗi: Planner/validator chưa bắt tốt kiểu `map scale / represents`, nơi phải chuẩn hóa rate bằng phép chia cho độ dài bản đồ đại diện, không nhân trực tiếp fraction.
+
+Thông tin pipeline:
+stdout:
+Pass ProblemFormalizer
+Pass Planner
+Pass Executor
+Running ProblemFormalizer...
+Running Planner...
+Running Executor...
+Pass Solver
+
+stderr:
+(trống)

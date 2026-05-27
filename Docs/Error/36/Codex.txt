@@ -1,0 +1,31 @@
+ID: 36
+Loại: Sai kết quả
+Stage lỗi: không có
+Target entity: total_small_stuffed_animals_sold
+Official answer: 12
+Pipeline answer: 25
+
+Câu hỏi:
+Teresa sells large stuffed animals for three times the price of small stuffed animals. Today, she sold twice as many small stuffed animals as large ones and earned $120 from the sales. Each small stuffed animal costs $4. How many small stuffed animals did she sell?
+
+Chẩn đoán:
+Sai logic Planner khi giải bài bán hàng theo hệ số tuyến tính.
+
+Plan tính giá thú lớn đúng là `4 * 3 = 12`, nhưng sau đó tạo một cụm `2 small + 1 large = 20`, trừ một lần khỏi 120 rồi chia phần còn lại cho giá thú nhỏ, dẫn tới 25.
+
+Quan hệ đúng là nếu bán `x` thú lớn thì thú nhỏ là `2x`; doanh thu là `2x * 4 + x * 12 = 20x`. Vì tổng doanh thu 120 nên `x = 6`, số thú nhỏ là `12`.
+
+Gốc lỗi: Planner cần xử lý các quan hệ `twice as many ... as ...` như hệ số của biến ẩn, không được coi đó là một lượng bán cố định rồi trừ khỏi tổng.
+
+Thông tin pipeline:
+stdout:
+Pass ProblemFormalizer
+Pass Planner
+Pass Executor
+Running ProblemFormalizer...
+Running Planner...
+Running Executor...
+Pass Solver
+
+stderr:
+(trống)

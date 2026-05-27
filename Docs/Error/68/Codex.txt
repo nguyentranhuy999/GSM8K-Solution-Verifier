@@ -1,0 +1,31 @@
+ID: 68
+Loại: Sai kết quả
+Stage lỗi: không có
+Target entity: total_kids
+Official answer: 68
+Pipeline answer: 58
+
+Câu hỏi:
+Mitch made 20 macarons. Joshua made 6 more macarons than Mitch but half as many macarons as Miles. Renz made 1 fewer than 3/4 as many macarons as Miles. If they will combine their macarons to give them to the kids on the street, how many kids would receive 2 macarons each?
+
+Chẩn đoán:
+Sai logic Planner do đặt tên step gây mất một nhóm trong tổng.
+
+Step1 có tên `total_macarons_mitch_joshua` nhưng expr chỉ là `mitch_macarons + joshua_macarons_more_than_mitch = 26`, thực chất đó là số macarons của Joshua, không phải tổng Mitch + Joshua. Khi cộng cuối, Plan dùng `26 + 52 + 38 = 116`, bỏ mất 20 macarons của Mitch, nên ra 58 thay vì 68.
+
+Công thức đúng: Joshua = 20 + 6 = 26, Miles = 26 / 0.5 = 52, Renz = 0.75 * 52 - 1 = 38, total = 20 + 26 + 52 + 38 = 136, kids = 68.
+
+Gốc lỗi: Planner/validator cần kiểm tra consistency giữa `result` name và expr, nhất là các result bắt đầu bằng `total_...` nhưng expr chưa cộng đủ các thành phần được nêu.
+
+Thông tin pipeline:
+stdout:
+Pass ProblemFormalizer
+Pass Planner
+Pass Executor
+Running ProblemFormalizer...
+Running Planner...
+Running Executor...
+Pass Solver
+
+stderr:
+(trống)

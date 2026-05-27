@@ -413,6 +413,12 @@ def copy_project_to_workspace() -> tempfile.TemporaryDirectory[str]:
     return temp_dir
 
 
+def record_progress_message(result_row: dict[str, Any], message: str, *, emit_log: bool) -> None:
+    result_row["_progress_message"] = message
+    if emit_log:
+        print(message, flush=True)
+
+
 def run_one_row(
     *,
     index: int,
@@ -422,6 +428,7 @@ def run_one_row(
     timeout: int,
     tolerance: Decimal,
     isolated: bool,
+    emit_log: bool = True,
 ) -> dict[str, Any]:
     question = row["question"].strip()
     official_answer = official_answer_for_row(row, answer_column)
@@ -485,17 +492,22 @@ def run_one_row(
         )
 
         status = "OK" if correct else "WRONG"
-        print(
+        record_progress_message(
+            result_row,
             f"[{index}/{total}] {status}: expected={official_answer!r}, "
             f"got={pipeline_answer!r} ({target_entity})",
-            flush=True,
+            emit_log=emit_log,
         )
     except subprocess.TimeoutExpired as exc:
         result_row["solver_stdout"] = (exc.stdout or "").strip() if isinstance(exc.stdout, str) else ""
         result_row["solver_stderr"] = (exc.stderr or "").strip() if isinstance(exc.stderr, str) else ""
         result_row["error_stage"] = "timeout"
         result_row["error"] = f"TimeoutExpired: solver exceeded {timeout}s"
-        print(f"[{index}/{total}] ERROR: {result_row['error']}", flush=True)
+        record_progress_message(
+            result_row,
+            f"[{index}/{total}] ERROR: {result_row['error']}",
+            emit_log=emit_log,
+        )
     except Exception as exc:  # noqa: BLE001 - benchmark should keep going.
         if not result_row.get("error_stage"):
             result_row["error_stage"] = classify_error_stage(
@@ -504,9 +516,10 @@ def run_one_row(
                 f"{type(exc).__name__}: {exc}",
             )
         result_row["error"] = f"{type(exc).__name__}: {exc}"
-        print(
+        record_progress_message(
+            result_row,
             f"[{index}/{total}] ERROR ({result_row['error_stage']}): {result_row['error']}",
-            flush=True,
+            emit_log=emit_log,
         )
     finally:
         result_row["duration_seconds"] = f"{time.monotonic() - start_time:.3f}"
@@ -589,6 +602,10 @@ def run_benchmark(args: argparse.Namespace) -> None:
             if args.sleep > 0:
                 print("--sleep is ignored when --workers is greater than 1.")
 
+            pending_indices = [index for index, _ in pending_rows]
+            completed_for_ordered_log: dict[int, dict[str, Any]] = {}
+            next_log_position = 0
+
             with ThreadPoolExecutor(max_workers=args.workers) as executor:
                 futures = [
                     executor.submit(
@@ -600,12 +617,26 @@ def run_benchmark(args: argparse.Namespace) -> None:
                         timeout=args.timeout,
                         tolerance=Decimal(str(args.tolerance)),
                         isolated=True,
+                        emit_log=False,
                     )
                     for index, row in pending_rows
                 ]
 
                 for future in as_completed(futures):
-                    results.append(future.result())
+                    result_row = future.result()
+                    results.append(result_row)
+                    completed_for_ordered_log[int(result_row["index"])] = result_row
+
+                    while next_log_position < len(pending_indices):
+                        next_index = pending_indices[next_log_position]
+                        if next_index not in completed_for_ordered_log:
+                            break
+
+                        message = completed_for_ordered_log[next_index].get("_progress_message")
+                        if message:
+                            print(message, flush=True)
+                        next_log_position += 1
+
                     write_all_outputs(
                         output_path=output_path,
                         rows=results,

@@ -1,0 +1,28 @@
+{
+  "pipeline": "Main/Solver.py",
+  "model": "openai/gpt-4o-mini",
+  "input": "/Users/nguyentranhuy/GSM8K-Solution-Verifier/Benchmark/GSM8K Benchmark.csv",
+  "output": "/Users/nguyentranhuy/GSM8K-Solution-Verifier/Output/BenchmarkOuput/solver_pipeline_case34_source_results.csv",
+  "total_limit": 34,
+  "completed_rows": 1,
+  "pending_rows": 33,
+  "attempted_rows": 0,
+  "correct_rows": 0,
+  "wrong_rows": 0,
+  "error_rows": 1,
+  "formalizer_error_rows": 1,
+  "planner_error_rows": 0,
+  "executor_error_rows": 0,
+  "target_read_error_rows": 0,
+  "timeout_error_rows": 0,
+  "error_stage_counts": {
+    "ProblemFormalizer": 1
+  },
+  "accuracy": 0.0,
+  "accuracy_percent": 0.0,
+  "accuracy_attempted": 0.0,
+  "accuracy_attempted_percent": 0.0,
+  "accuracy_completed": 0.0,
+  "accuracy_completed_percent": 0.0,
+  "updated_at": "2026-05-27T16:12:56"
+}

@@ -1,0 +1,29 @@
+ID: 94
+Loại: Sai kết quả
+Stage lỗi: không có
+Target entity: grapefruits_orchards
+Official answer: 2
+Pipeline answer: 4
+
+Câu hỏi:
+A citrus grove has laid out their plans for their sixteen orchards for the growing season. Lemons, their most popular citrus fruit, will take up eight orchards. Oranges are their second most popular fruit and will occupy half as many orchards as the lemons. Limes and grapefruits will split the remaining orchards. How many citrus orchards will be growing grapefruits?
+
+Chẩn đoán:
+Sai logic Planner khi tính phần còn lại để chia.
+
+Plan tính `remaining_orchards = 16 - 8 = 8`, rồi chia đôi cho grapefruits. Nhưng oranges chiếm `8 * 0.5 = 4` orchards, nên phần còn lại cho limes và grapefruits phải là `16 - 8 - 4 = 4`; grapefruits = 2.
+
+Gốc lỗi: Planner xử lý `remaining` quá sớm, trước khi trừ hết các category đã được cấp phát. Validator nên bắt các bài phân bổ category khi tổng `remaining` chưa loại trừ tất cả nhóm đã nêu trước câu split.
+
+Thông tin pipeline:
+stdout:
+Pass ProblemFormalizer
+Pass Planner
+Pass Executor
+Running ProblemFormalizer...
+Running Planner...
+Running Executor...
+Pass Solver
+
+stderr:
+(trống)

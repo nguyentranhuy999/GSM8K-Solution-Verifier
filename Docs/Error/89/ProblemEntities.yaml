@@ -1,0 +1,40 @@
+pieces_of_hundred_bills:
+  value: 2
+  unit: pieces
+  location: input
+  grand_unit: pieces
+hundred_bill_value:
+  value: 100
+  unit: dollars
+  location: input
+  grand_unit: dollars
+fifty_bill_value:
+  value: 50
+  unit: dollars
+  location: input
+  grand_unit: dollars
+ten_bill_value:
+  value: 10
+  unit: dollars
+  location: input
+  grand_unit: dollars
+five_bill_value:
+  value: 5
+  unit: dollars
+  location: input
+  grand_unit: dollars
+half_fraction:
+  value: 0.5
+  unit: null
+  location: input
+  grand_unit: null
+total_pieces_of_bills:
+  value: null
+  unit: pieces
+  location: target
+  grand_unit: pieces
+identity_multiplier:
+  value: 1
+  unit: null
+  location: input
+  grand_unit: null

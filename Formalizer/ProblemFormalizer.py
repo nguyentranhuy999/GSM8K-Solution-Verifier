@@ -261,6 +261,10 @@ Nhiệm vụ của bạn:
     Không tự tạo multiplier 0.8 vì đó là số phải suy ra từ 1 - 0.2.
 11. Với rate như "2 books a month", "5 pages per day", giữ chu kỳ trong tên entity.
     Ví dụ: books_per_month, pages_per_day. Không đổi value thành tổng theo năm/ngày khác.
+    Chỉ dùng tên dạng *_per_* khi đề thực sự nói rate trên một đơn vị, như "per", "each",
+    "a/an", hoặc mẫu tương đương với mẫu số là 1.
+    Ví dụ "1/4 inch represents 8 miles" KHÔNG phải miles_per_inch value 8.
+    Hãy giữ hai số trực tiếp thành hai entity riêng có cùng source clause.
 12. Với quan hệ so sánh như "X has 2 fewer than Y", "X has 5 more than Y":
     số trực tiếp là độ chênh lệch, không phải số lượng thật của X.
     Tên entity phải thể hiện đây là độ chênh, ví dụ books_borrowed_fewer_than_books_bought.
@@ -284,12 +288,20 @@ Nhiệm vụ của bạn:
     Không đặt target là total_books_needed nếu đề hỏi số sách cũ phải đọc lại.
     Ví dụ câu hỏi "How many friends can she invite?" thì target phải là số friends, như total_friends.
     Không đặt target là total_cost nếu đề hỏi số bạn được mời.
+15. Mỗi entity phải có source là phrase/clause gốc trong đề bài làm bằng chứng cho value/target.
+    - Với input, source phải là đoạn ngắn trong đề có chứa số hoặc chữ số tương ứng.
+    - Với target, source là câu hỏi hoặc phrase hỏi đại lượng cần tìm.
+    - Nếu nhiều số nằm trong cùng một quan hệ, dùng cùng source clause để giữ quan hệ đó.
+      Ví dụ "1/4 inch represents 8 miles of actual road distance" thì entity 0.25 inches
+      và entity 8 miles đều dùng source này.
+    - Planner sẽ dùng source để hiểu vai trò của số, nên không nhét toàn bộ quan hệ vào tên biến.
 
-Mỗi thực thể phải có đúng 4 trường:
+Mỗi thực thể phải có đúng 5 trường:
 - value: giá trị số được cho trực tiếp trong đề bài. Với target, để rỗng bằng null.
 - unit: đơn vị trực tiếp của thực thể, viết bằng tiếng Anh dạng số nhiều nếu phù hợp. Ví dụ: dollars, days, books, pens. Với scalar như phần trăm, phân số, nhân tử, có thể để rỗng.
 - location: input hoặc target.
 - grand_unit: đơn vị đối chiếu theo target.
+- source: chuỗi ngắn trích từ đề bài, luôn đặt trong quotes. Với input, source là phrase/clause chứa số. Với target, source là phrase/câu hỏi.
 
 Quy tắc grand_unit:
 - Nếu thực thể có cùng loại đơn vị với target hoặc là thành phần có thể cộng/tổng hợp vào target, grand_unit là unit của target.
@@ -316,7 +328,7 @@ Tên biến:
 - Không dùng Markdown.
 - Không bọc trong ```.
 - Không giải thích.
-- Không thêm trường ngoài 4 trường đã yêu cầu.
+- Không thêm trường ngoài 5 trường đã yêu cầu.
 
 Ví dụ:
 morning_coffee_price:
@@ -324,36 +336,42 @@ morning_coffee_price:
   unit: dollars
   location: input
   grand_unit: dollars
+  source: "morning coffee $3"
 
 afternoon_coffee_price:
   value: 2.50
   unit: dollars
   location: input
   grand_unit: dollars
+  source: "afternoon coffee $2.50"
 
 days:
   value: 20
   unit: days
   location: input
   grand_unit:
+  source: "20 days"
 
 fraction_wasted_pac_man:
   value: 0.3333333333333333
   unit:
   location: input
   grand_unit:
+  source: "a third of them were Pac-Man"
 
 parent_token_multiplier:
   value: 7
   unit:
   location: input
   grand_unit:
+  source: "seven times as many tokens as a parent"
 
 total_cost:
   value:
   unit: dollars
   location: target
   grand_unit: dollars
+  source: "How much did she spend?"
 """.strip()
 
 
@@ -366,6 +384,11 @@ Output trước bị reject vì lỗi:
 {previous_error}
 
 Hãy sinh lại YAML, chỉ dùng số được nêu trực tiếp trong đề. Không tạo số suy ra.
+Nếu lỗi liên quan tên *_per_* với source dạng "A represents/corresponds to/is equivalent to B"
+mà A không phải 1 đơn vị, tuyệt đối không dùng bất kỳ entity name nào chứa "_per_" cho
+hai số trong relation đó. Hãy tạo hai entity input riêng có cùng source clause, ví dụ
+scale_source_quantity và scale_target_quantity hoặc map_scale_map_distance và
+map_scale_actual_distance.
 """.rstrip()
 
     return f"""
@@ -1457,8 +1480,48 @@ def validate_multiplicative_relationship_names(
         )
 
 
+def validate_per_entity_names_match_source(
+    entities: Dict[str, Dict[str, Any]],
+) -> None:
+    """
+    Không cho entity name dạng *_per_* encode sai một relation chưa chuẩn hóa.
+
+    Ví dụ "1/4 inch represents 8 miles" không được đặt là miles_per_inch: 8,
+    vì "per inch" ngụ ý mẫu số là 1 inch trong khi source nói 0.25 inch.
+    """
+    relation_words = r"\b(?:represents?|corresponds?\s+to|equivalent\s+to|equals?)\b"
+
+    for entity_name, entity in entities.items():
+        if "_per_" not in entity_name:
+            continue
+        if entity_name.startswith("unit_conversion_"):
+            continue
+
+        source = normalize_empty(entity.get("source"))
+        if source is None:
+            continue
+
+        source_text = str(source).lower()
+        if not re.search(relation_words, source_text):
+            continue
+
+        source_values = extract_direct_numeric_values(source_text)
+        if len(source_values) < 2:
+            continue
+
+        first_value = source_values[0]
+        if numbers_equal(first_value, 1):
+            continue
+
+        raise ProblemFormalizerError(
+            f"{entity_name!r} dùng tên dạng *_per_* nhưng source {source!r} có vế trái "
+            f"không phải 1 đơn vị. Hãy tạo hai entity riêng có cùng source clause thay vì "
+            "chuẩn hóa rate trong tên biến."
+        )
+
+
 def validate_and_normalize(entities: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    required_fields = {"value", "unit", "location", "grand_unit"}
+    required_fields = {"value", "unit", "location", "grand_unit", "source"}
     normalized: Dict[str, Dict[str, Any]] = {}
     target_count = 0
 
@@ -1504,17 +1567,24 @@ def validate_and_normalize(entities: Dict[str, Any]) -> Dict[str, Dict[str, Any]
 
         unit = normalize_empty(entity["unit"])
         grand_unit = normalize_empty(entity["grand_unit"])
+        source = normalize_empty(entity.get("source"))
 
         if unit is not None:
             unit = str(unit).strip()
         if grand_unit is not None:
             grand_unit = str(grand_unit).strip()
+        if source is None or not str(source).strip():
+            raise ProblemFormalizerError(
+                f"{entity_name}.source phải là phrase/clause gốc trong đề bài, không được rỗng."
+            )
+        source = str(source).strip()
 
         normalized[entity_name] = {
             "value": value,
             "unit": unit,
             "location": location,
             "grand_unit": grand_unit,
+            "source": source,
         }
 
     if target_count != 1:
@@ -1561,6 +1631,7 @@ def run() -> None:
                 validate_values_are_direct(problem, candidate_entities)
                 validate_target_name_matches_question(problem, candidate_entities)
                 validate_multiplicative_relationship_names(problem, candidate_entities)
+                validate_per_entity_names_match_source(candidate_entities)
             except ProblemFormalizerError as exc:
                 previous_error = str(exc)
                 last_validation_error = exc

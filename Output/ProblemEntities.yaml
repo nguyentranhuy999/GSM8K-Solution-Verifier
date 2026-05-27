@@ -1,38 +1,33 @@
-pieces_of_hundred_bills:
+coffees_per_day:
   value: 2
-  unit: pieces
+  unit: coffees
   location: input
-  grand_unit: pieces
-hundred_bill_value:
-  value: 100
+  grand_unit: coffees
+  source: 2 coffees a day
+morning_coffee_price:
+  value: 3.0
   unit: dollars
   location: input
   grand_unit: dollars
-fifty_bill_value:
-  value: 50
+  source: double espresso for $3.00 every morning
+afternoon_coffee_price:
+  value: 2.5
   unit: dollars
   location: input
   grand_unit: dollars
-ten_bill_value:
-  value: 10
-  unit: dollars
-  location: input
-  grand_unit: dollars
-five_bill_value:
-  value: 5
-  unit: dollars
-  location: input
-  grand_unit: dollars
-half_fraction:
-  value: 0.5
-  unit: null
+  source: iced coffee for $2.50
+days:
+  value: 20
+  unit: days
   location: input
   grand_unit: null
-total_pieces_of_bills:
+  source: 20 days
+total_cost:
   value: null
-  unit: pieces
+  unit: dollars
   location: target
-  grand_unit: pieces
+  grand_unit: dollars
+  source: How much money has she spent on coffee?
 identity_multiplier:
   value: 1
   unit: null

@@ -1,0 +1,80 @@
+index,question,official_answer,target_entity,pipeline_answer,correct,solver_stdout,solver_stderr,problem_entities_yaml,plan_yaml,plan_entities_yaml,error_stage,error,duration_seconds
+34,"On a road map, 1/4 inch represents 8 miles of actual road distance. The towns of Pence and Hillcrest are represented by points 3 3/8 inches apart on the map. What is the actual distance, in miles, between the towns?",108,actual_distance,108,yes,"Pass ProblemFormalizer
+Pass Planner
+Pass Executor
+Running ProblemFormalizer...
+Running Planner...
+Running Executor...
+Pass Solver",,"map_scale_map_distance:
+  value: 0.25
+  unit: inches
+  location: input
+  grand_unit: null
+  source: 1/4 inch represents 8 miles
+map_scale_actual_distance:
+  value: 8
+  unit: miles
+  location: input
+  grand_unit: null
+  source: 1/4 inch represents 8 miles
+towns_distance:
+  value: 3.375
+  unit: inches
+  location: input
+  grand_unit: null
+  source: 3 3/8 inches apart on the map
+actual_distance:
+  value: null
+  unit: miles
+  location: target
+  grand_unit: miles
+  source: What is the actual distance, in miles, between the towns?","step1:
+  expr: towns_distance / map_scale_map_distance
+  result: actual_distance_in_miles
+  result_unit: miles
+  result_grand_unit: miles
+  reported_expr: 3.375 / 0.250 = 13.500
+step2:
+  expr: actual_distance_in_miles * map_scale_actual_distance
+  result: actual_distance
+  result_unit: miles
+  result_grand_unit: miles
+  reported_expr: 13.5 * 8.0 = 108.0","map_scale_map_distance:
+  value: 0.25
+  unit: inches
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+  source: 1/4 inch represents 8 miles
+map_scale_actual_distance:
+  value: 8
+  unit: miles
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+  source: 1/4 inch represents 8 miles
+towns_distance:
+  value: 3.375
+  unit: inches
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+  source: 3 3/8 inches apart on the map
+actual_distance:
+  value: 108
+  unit: miles
+  location: target
+  grand_unit: miles
+  expr: actual_distance_in_miles * map_scale_actual_distance
+  formalized_expr: towns_distance / map_scale_map_distance * map_scale_actual_distance
+  source: What is the actual distance, in miles, between the towns?
+actual_distance_in_miles:
+  value: 13.5
+  unit: miles
+  location: step1
+  grand_unit: miles
+  expr: towns_distance / map_scale_map_distance
+  formalized_expr: towns_distance / map_scale_map_distance",,,34.267

@@ -37,6 +37,7 @@ Các lỗi check:
 - missing step
 - misreading
 - logic error
+- double count
 - extra step
 
 Quy tắc Wrong.yaml:
@@ -288,12 +289,20 @@ def values_for_symbolic_expr(expr: str, entities: Dict[str, Dict[str, Any]]) -> 
     return values
 
 
-def add_error(errors: List[Dict[str, Any]], diagnosis: str, step: Optional[str] = None, entity: Optional[str] = None) -> None:
+def add_error(
+    errors: List[Dict[str, Any]],
+    diagnosis: str,
+    step: Optional[str] = None,
+    entity: Optional[str] = None,
+    detail: Optional[str] = None,
+) -> None:
     item = {
         "diagnosis": diagnosis,
         "step": step,
         "entity": entity,
     }
+    if detail:
+        item["detail"] = detail
     if item not in errors:
         errors.append(item)
 
@@ -472,6 +481,10 @@ def is_generic_count_unit(unit: Any) -> bool:
     return normalized not in NON_COUNT_UNITS
 
 
+def is_money_unit(unit: Any) -> bool:
+    return normalized_unit(unit) in {"dollar", "dollars", "usd", "$", "cent", "cents"}
+
+
 def same_convertible_family(unit_a: Any, unit_b: Any) -> bool:
     a = normalized_unit(unit_a)
     b = normalized_unit(unit_b)
@@ -534,6 +547,80 @@ def check_wrong_relationship(plan: Dict[str, Any], entities: Dict[str, Dict[str,
                     add_error(errors, "do not convert units", step=sname, entity=step.get("result"))
                 else:
                     add_error(errors, "wrong relationship", step=sname, entity=step.get("result"))
+
+
+def result_expr(entity_name: str, plan: Dict[str, Any]) -> Optional[str]:
+    for sname in step_names(plan):
+        step = plan[sname]
+        if normalize_empty(step.get("result")) == entity_name:
+            return normalize_empty(step.get("expr"))
+    return None
+
+
+def entity_lineage_expr(entity_name: str, plan: Dict[str, Any], entities: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    entity = entities.get(entity_name)
+    if entity:
+        formalized_expr = normalize_empty(entity.get("formalized_expr"))
+        if formalized_expr:
+            return str(formalized_expr)
+
+    return result_expr(entity_name, plan)
+
+
+def money_input_tokens(expr: Optional[str], entities: Dict[str, Dict[str, Any]]) -> List[str]:
+    tokens = expr_tokens(expr)
+    return [
+        token
+        for token in tokens
+        if token in entities
+        and entities[token].get("location") == "input"
+        and is_money_unit(entities[token].get("unit"))
+    ]
+
+
+def check_double_count_summary_counts(plan: Dict[str, Any], entities: Dict[str, Dict[str, Any]], errors: List[Dict[str, Any]]) -> None:
+    """
+    Bắt lỗi nội tại: đã cộng giá tiền từng component rồi lại nhân thêm count summary.
+
+    Ví dụ coffee:
+    daily_cost = morning_price + afternoon_price
+    total = daily_cost * coffees_per_day * days
+
+    `coffees_per_day` chỉ là summary của hai component đã cộng, nên dùng tiếp sẽ
+    đếm trùng.
+    """
+    for sname in step_names(plan):
+        step = plan[sname]
+        expr = normalize_empty(step.get("expr"))
+        if not expr or "*" not in expr:
+            continue
+        if not is_money_unit(step.get("result_unit")):
+            continue
+
+        tokens = expr_tokens(expr)
+        count_tokens = [
+            token
+            for token in tokens
+            if token in entities and is_generic_count_unit(entities[token].get("unit"))
+        ]
+        if not count_tokens:
+            continue
+
+        for token in tokens:
+            lineage_expr = entity_lineage_expr(token, plan, entities)
+            if not lineage_expr:
+                continue
+
+            money_inputs = money_input_tokens(lineage_expr, entities)
+            if len(set(money_inputs)) >= 2:
+                count_hint = ", ".join(count_tokens)
+                detail = (
+                    f"{sname}.expr nhân subtotal {token!r} với count input [{count_hint}] "
+                    "sau khi subtotal đó đã cộng nhiều money input component. "
+                    "Nếu count input chỉ tóm tắt các component đã cộng, hãy bỏ count đó "
+                    "hoặc tính lại subtotal theo đúng đơn vị trước khi nhân."
+                )
+                add_error(errors, "double count", step=sname, entity=step.get("result"), detail=detail)
 
 
 def produced_step_by_entity(plan: Dict[str, Any]) -> Dict[str, str]:
@@ -742,6 +829,7 @@ def run_checks(mode: str) -> List[Dict[str, Any]]:
     check_unit_missing(entities, errors, mode=mode)
     check_only_final_answer(plan, errors)
     check_wrong_relationship(plan, entities, errors)
+    check_double_count_summary_counts(plan, entities, errors)
     check_missing_step(plan, entities, errors)
     check_misreading_and_logic_error(plan, entities, errors)
     check_extra_step(plan, entities, errors)

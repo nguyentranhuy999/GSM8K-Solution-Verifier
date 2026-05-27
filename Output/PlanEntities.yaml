@@ -1,55 +1,48 @@
-pieces_of_hundred_bills:
+coffees_per_day:
   value: 2
-  unit: pieces
+  unit: coffees
   location: input
-  grand_unit: pieces
+  grand_unit: coffees
   expr: null
   formalized_expr: null
-hundred_bill_value:
-  value: 100
+  map: coffees_per_day
+  source: 2 coffees a day
+morning_coffee_price:
+  value: 3.0
   unit: dollars
   location: input
   grand_unit: dollars
   expr: null
   formalized_expr: null
-fifty_bill_value:
-  value: 50
+  map: morning_coffee_price
+  source: double espresso for $3.00 every morning
+afternoon_coffee_price:
+  value: 2.5
   unit: dollars
   location: input
   grand_unit: dollars
   expr: null
   formalized_expr: null
-ten_bill_value:
-  value: 10
-  unit: dollars
-  location: input
-  grand_unit: dollars
-  expr: null
-  formalized_expr: null
-five_bill_value:
-  value: 5
-  unit: dollars
-  location: input
-  grand_unit: dollars
-  expr: null
-  formalized_expr: null
-half_fraction:
-  value: 0.5
-  unit: null
+  map: afternoon_coffee_price
+  source: iced coffee for $2.50
+days:
+  value: 20
+  unit: days
   location: input
   grand_unit: null
   expr: null
   formalized_expr: null
-total_pieces_of_bills:
-  value: 24.5
-  unit: pieces
+  map: days
+  source: 20 days
+total_cost:
+  value: 110
+  unit: dollars
   location: target
-  grand_unit: pieces
-  expr: pieces_of_hundred_bills + ten_bills + five_bills
-  formalized_expr: pieces_of_hundred_bills + (((pieces_of_hundred_bills * hundred_bill_value
-    - fifty_bill_value) * half_fraction) / ten_bill_value) + ((pieces_of_hundred_bills
-    * hundred_bill_value - fifty_bill_value) - ((pieces_of_hundred_bills * hundred_bill_value
-    - fifty_bill_value) * half_fraction) / five_bill_value)
+  grand_unit: dollars
+  expr: daily_coffee_cost * days
+  formalized_expr: (morning_coffee_price + afternoon_coffee_price) * days
+  map: total_cost
+  source: How much money has she spent on coffee?
 identity_multiplier:
   value: 1
   unit: null
@@ -57,50 +50,12 @@ identity_multiplier:
   grand_unit: null
   expr: null
   formalized_expr: null
-total_hundred_dollars:
-  value: 200
+  map: identity_multiplier
+daily_coffee_cost:
+  value: 5.5
   unit: dollars
   location: step1
   grand_unit: dollars
-  expr: pieces_of_hundred_bills * hundred_bill_value
-  formalized_expr: pieces_of_hundred_bills * hundred_bill_value
-remaining_hundred_dollars:
-  value: 150
-  unit: dollars
-  location: step2
-  grand_unit: dollars
-  expr: total_hundred_dollars - fifty_bill_value
-  formalized_expr: pieces_of_hundred_bills * hundred_bill_value - fifty_bill_value
-half_remaining_hundred_dollars:
-  value: 75
-  unit: dollars
-  location: step3
-  grand_unit: dollars
-  expr: remaining_hundred_dollars * half_fraction
-  formalized_expr: (pieces_of_hundred_bills * hundred_bill_value - fifty_bill_value)
-    * half_fraction
-ten_bills:
-  value: 7.5
-  unit: pieces
-  location: step4
-  grand_unit: pieces
-  expr: half_remaining_hundred_dollars / ten_bill_value
-  formalized_expr: ((pieces_of_hundred_bills * hundred_bill_value - fifty_bill_value)
-    * half_fraction) / ten_bill_value
-remaining_after_half:
-  value: 75
-  unit: dollars
-  location: step5
-  grand_unit: dollars
-  expr: remaining_hundred_dollars - half_remaining_hundred_dollars
-  formalized_expr: (pieces_of_hundred_bills * hundred_bill_value - fifty_bill_value)
-    - ((pieces_of_hundred_bills * hundred_bill_value - fifty_bill_value) * half_fraction)
-five_bills:
-  value: 15
-  unit: pieces
-  location: step6
-  grand_unit: pieces
-  expr: remaining_after_half / five_bill_value
-  formalized_expr: (pieces_of_hundred_bills * hundred_bill_value - fifty_bill_value)
-    - ((pieces_of_hundred_bills * hundred_bill_value - fifty_bill_value) * half_fraction)
-    / five_bill_value
+  expr: morning_coffee_price + afternoon_coffee_price
+  formalized_expr: morning_coffee_price + afternoon_coffee_price
+  map: intermediate_entity
