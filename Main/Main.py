@@ -1,24 +1,31 @@
 """
 Main/Main.py
 
-Pipeline đầy đủ:
+Pipeline đầy đủ.
+
+Luồng mặc định:
 1. Main/Solver.py
    - ProblemFormalizer
    - Planner
    - Executor
-   - Executor tự chạy InsideChecker/repair cho lời giải chuẩn.
 2. Formalizer/StudentAnswerFormalizer.py
 3. Verifier/InsideChecker.py --mode student
 4. Formalizer/Mapper.py
 5. Verifier/CompareChecker.py
 
-Ghi chú:
-- Mapper.py là bước bắt buộc trước CompareChecker.py vì CompareChecker cần
-  trường map trong PlanEntities.yaml và StudentAnswerEntities.yaml.
+Luồng giáo viên:
+python3 Main/Main.py --reference teacher
+1. Formalizer/ProblemFormalizer.py
+2. Formalizer/TeacherAnswerFormalizer.py
+3. Formalizer/StudentAnswerFormalizer.py
+4. Verifier/InsideChecker.py --mode student
+5. Formalizer/Mapper.py
+6. Verifier/CompareChecker.py
 """
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -35,11 +42,25 @@ class Stage:
     command: List[str]
 
 
-STAGES = [
+SOLVER_REFERENCE_STAGES = [
     Stage(
         name="Solver",
         command=[sys.executable, str(ROOT_DIR / "Main" / "Solver.py")],
     ),
+]
+
+TEACHER_REFERENCE_STAGES = [
+    Stage(
+        name="ProblemFormalizer",
+        command=[sys.executable, str(ROOT_DIR / "Formalizer" / "ProblemFormalizer.py")],
+    ),
+    Stage(
+        name="TeacherAnswerFormalizer",
+        command=[sys.executable, str(ROOT_DIR / "Formalizer" / "TeacherAnswerFormalizer.py")],
+    ),
+]
+
+COMPARE_STAGES = [
     Stage(
         name="StudentAnswerFormalizer",
         command=[sys.executable, str(ROOT_DIR / "Formalizer" / "StudentAnswerFormalizer.py")],
@@ -77,8 +98,26 @@ def run_stage(stage: Stage) -> None:
         raise SystemExit(completed.returncode)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run solution comparison pipeline.")
+    parser.add_argument(
+        "--reference",
+        choices=["solver", "teacher"],
+        default="solver",
+        help="solver: tự giải làm chuẩn; teacher: dùng Input/TeacherAnswer.txt làm lời giải chuẩn.",
+    )
+    return parser.parse_args()
+
+
+def stages_for_reference(reference: str) -> List[Stage]:
+    if reference == "teacher":
+        return TEACHER_REFERENCE_STAGES + COMPARE_STAGES
+    return SOLVER_REFERENCE_STAGES + COMPARE_STAGES
+
+
 def run() -> None:
-    for stage in STAGES:
+    args = parse_args()
+    for stage in stages_for_reference(args.reference):
         run_stage(stage)
 
     print("Pass Main")

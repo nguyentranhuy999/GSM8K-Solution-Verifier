@@ -1,0 +1,7 @@
+Each morning coffee costs $3.00.
+Each afternoon coffee costs $2.50.
+Total cost per day is $3.00 + $2.50 = $5.50.
+She buys coffee for 20 days.
+Total cost for 20 days is $5.50 × 20.
+$5.50 × 20 = $110.00.
+Therefore, the final answer is 110.

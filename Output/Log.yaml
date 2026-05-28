@@ -5,3 +5,4 @@ Executor: Pass Executor
 StudentAnswerFormalizer: Pass StudentAnswerFormalizer
 Mapper: Pass Mapper
 CompareChecker: Pass CompareChecker
+TeacherAnswerFormalizer: Pass TeacherAnswerFormalizer

@@ -10,3 +10,4 @@ step2:
   result_unit: dollars
   result_grand_unit: dollars
   reported_expr: 5.50 * 20 = 110.00
+target: total_cost

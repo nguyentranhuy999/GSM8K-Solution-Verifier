@@ -39,11 +39,11 @@ total_cost:
   unit: dollars
   location: target
   grand_unit: dollars
-  expr: daily_coffee_cost * days
+  expr: intermediate_entity * days
   formalized_expr: (morning_coffee_price + afternoon_coffee_price) * days
   map: total_cost
   source: How much money has she spent on coffee?
-daily_coffee_cost:
+intermediate_entity:
   value: 5.5
   unit: dollars
   location: step1
