@@ -41,7 +41,6 @@ Verifier/
 Benchmark/
   GSM8K Benchmark.csv
   RunSolveBenchmark.py        # Chạy Solver.py trên benchmark
-  RunSolveBechmark.py         # Wrapper cho tên typo
 
 Output/
   ProblemEntities.yaml
@@ -218,21 +217,24 @@ Chạy solver trên benchmark và so sánh target value với cột `offical ans
 python3 Benchmark/RunSolveBenchmark.py --limit 200 --workers 4
 ```
 
-Wrapper typo cũng dùng được:
-
-```bash
-python3 Benchmark/RunSolveBechmark.py --limit 200 --workers 4
-```
-
 Output mặc định:
 
 ```text
-Output/BenchmarkOuput/solver_pipeline_benchmark_results.csv
-Output/BenchmarkOuput/solver_pipeline_benchmark_results_wrong.csv
-Output/BenchmarkOuput/solver_pipeline_benchmark_results_summary.json
+Error/results_summary.json
+Error/Summary.md
+Error/index.html
+Error/<id>/ProblemEntities.yaml
+Error/<id>/Plan.yaml
+Error/<id>/PlanEntities.yaml
 ```
 
-CSV benchmark có các snapshot để debug:
+CSV không ghi mặc định. Nếu cần CSV:
+
+```bash
+python3 Benchmark/RunSolveBenchmark.py --limit 200 --workers 4 --write-csv
+```
+
+CSV benchmark khi bật `--write-csv` có các snapshot để debug:
 
 - `problem_entities_yaml`
 - `plan_yaml`

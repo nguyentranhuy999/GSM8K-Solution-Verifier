@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GSM8K Solution Verifier Overview</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #17202a;
+      --muted: #667085;
+      --line: #d7dde5;
+      --blue: #1f6feb;
+      --green: #16803c;
+      --amber: #a15c00;
+      --rose: #b42318;
+      --violet: #6f3cc3;
+      --code: #f0f3f7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.5;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      padding: 16px 24px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    .subtitle {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    main {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      min-height: calc(100vh - 74px);
+    }
+    nav {
+      position: sticky;
+      top: 74px;
+      height: calc(100vh - 74px);
+      overflow: auto;
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 16px;
+    }
+    nav a {
+      display: block;
+      color: var(--ink);
+      text-decoration: none;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    nav a:hover { background: #eef2f6; }
+    .content {
+      padding: 22px 28px 42px;
+      max-width: 1180px;
+      width: 100%;
+    }
+    section {
+      margin-bottom: 28px;
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 20px;
+    }
+    h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .metric {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .metric b {
+      display: block;
+      font-size: 24px;
+      margin-bottom: 2px;
+    }
+    .metric span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .band {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .pipeline {
+      display: grid;
+      gap: 12px;
+    }
+    .flow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .node {
+      border: 1px solid var(--line);
+      background: #f9fafb;
+      border-left: 4px solid var(--blue);
+      border-radius: 8px;
+      padding: 9px 11px;
+      min-width: 150px;
+      font-size: 13px;
+    }
+    .node.green { border-left-color: var(--green); }
+    .node.amber { border-left-color: var(--amber); }
+    .node.rose { border-left-color: var(--rose); }
+    .arrow {
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    button {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      padding: 7px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 14px;
+    }
+    button.active {
+      background: var(--blue);
+      color: #fff;
+      border-color: var(--blue);
+    }
+    input {
+      min-width: 240px;
+      flex: 1;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      padding: 8px 10px;
+      border-radius: 6px;
+      font: inherit;
+      font-size: 14px;
+    }
+    .file-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .file-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px;
+    }
+    .file-card h3 {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 15px;
+    }
+    .badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 7px;
+      font-size: 12px;
+      color: #fff;
+      white-space: nowrap;
+    }
+    .Main { background: var(--blue); }
+    .Formalizer { background: var(--green); }
+    .Verifier { background: var(--rose); }
+    .Benchmark { background: var(--violet); }
+    .file-card p {
+      margin: 5px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .file-card ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+      font-size: 13px;
+    }
+    .doc-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .doc-links a {
+      display: inline-block;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      text-decoration: none;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 14px;
+    }
+    .changes {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .change {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--amber);
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 14px;
+    }
+    code {
+      background: var(--code);
+      padding: 1px 4px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+    @media (max-width: 920px) {
+      main { grid-template-columns: 1fr; }
+      nav {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .summary-grid, .file-grid, .changes { grid-template-columns: 1fr; }
+      .content { padding: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>GSM8K Solution Verifier Overview</h1>
+    <p class="subtitle">Tổng quan trực quan về các file Python, pipeline và thay đổi so với Prompt.pdf.</p>
+  </header>
+  <main>
+    <nav>
+      <a href="#summary">Tổng quan</a>
+      <a href="#pipelines">Pipeline</a>
+      <a href="#files">File Python</a>
+      <a href="#changes">Khác với Prompt.pdf</a>
+      <a href="#docs">Markdown docs</a>
+    </nav>
+    <div class="content">
+      <section id="summary">
+        <div class="summary-grid">
+          <div class="metric"><b>15</b><span>file Python chính</span></div>
+          <div class="metric"><b>4</b><span>nhóm module</span></div>
+          <div class="metric"><b>2</b><span>luồng reference: solver / teacher</span></div>
+          <div class="metric"><b>3</b><span>benchmark runner</span></div>
+        </div>
+      </section>
+
+      <section id="pipelines">
+        <h2>Pipeline</h2>
+        <div class="band pipeline">
+          <h3>Solver Reference</h3>
+          <div class="flow">
+            <div class="node green">ProblemFormalizer<br><code>ProblemEntities.yaml</code></div>
+            <span class="arrow">-></span>
+            <div class="node green">Planner<br><code>Code.txt + Plan.yaml</code></div>
+            <span class="arrow">-></span>
+            <div class="node green">Executor<br><code>PlanEntities.yaml</code></div>
+            <span class="arrow">-></span>
+            <div class="node rose">InsideChecker llm<br><code>Error.yaml</code></div>
+          </div>
+
+          <h3>Teacher Reference</h3>
+          <div class="flow">
+            <div class="node green">ProblemFormalizer</div>
+            <span class="arrow">-></span>
+            <div class="node green">TeacherAnswerFormalizer</div>
+            <span class="arrow">-></span>
+            <div class="node amber">Reference<br><code>Plan.yaml</code></div>
+          </div>
+
+          <h3>Grading</h3>
+          <div class="flow">
+            <div class="node green">StudentAnswerFormalizer</div>
+            <span class="arrow">-></span>
+            <div class="node rose">InsideChecker student</div>
+            <span class="arrow">-></span>
+            <div class="node green">Mapper</div>
+            <span class="arrow">-></span>
+            <div class="node rose">CompareChecker</div>
+            <span class="arrow">-></span>
+            <div class="node amber">Diagnosis + Wrong</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="files">
+        <h2>File Python</h2>
+        <div class="controls">
+          <button class="active" data-filter="All">All</button>
+          <button data-filter="Main">Main</button>
+          <button data-filter="Formalizer">Formalizer</button>
+          <button data-filter="Verifier">Verifier</button>
+          <button data-filter="Benchmark">Benchmark</button>
+          <input id="search" placeholder="Tìm file hoặc vai trò">
+        </div>
+        <div class="file-grid" id="fileGrid"></div>
+      </section>
+
+      <section id="changes">
+        <h2>Khác Biệt Chính So Với Prompt.pdf</h2>
+        <div class="changes">
+          <div class="change"><b>Planner đổi hướng.</b><br>Prompt gốc cho LLM sinh <code>Plan.yaml</code> trực tiếp. Code hiện tại cho LLM sinh <code>Code.txt</code>, rồi Python map số về entity để tạo plan symbolic.</div>
+          <div class="change"><b>Entity có helper constants.</b><br><code>unit_conversion_*</code>, <code>identity_multiplier</code>, <code>percentage_scale</code>, <code>host_count</code>, <code>split_count</code> được thêm bằng code để giữ expr không có số literal.</div>
+          <div class="change"><b>Validator dày hơn.</b><br>Các formalizer không chỉ tin output LLM; chúng reject YAML sai schema, số không grounded, step thiếu, target sai, numeric literal trong expr.</div>
+          <div class="change"><b>Diagnosis được merge.</b><br><code>Diagnosis.yaml</code> không bị stage sau ghi đè; <code>Wrong.yaml</code> không bị hạ từ Yes về No nếu đã phát hiện lỗi.</div>
+          <div class="change"><b>Main được tách.</b><br><code>Main/Tutor.py</code> tạo reference, <code>Main/Grader.py</code> chấm student answer. Full pipeline cũ chuyển thành <code>Grader.py --reference solver</code>.</div>
+          <div class="change"><b>Benchmark và dashboard.</b><br>Các benchmark runner, folder lỗi theo id và dashboard HTML là phần thêm sau Prompt.pdf để debug nhiều case.</div>
+        </div>
+      </section>
+
+      <section id="docs">
+        <h2>Markdown Docs</h2>
+        <div class="doc-links">
+          <a href="PythonFiles/Index.md">PythonFiles/Index.md</a>
+          <a href="PythonFiles/Main.md">PythonFiles/Main.md</a>
+          <a href="PythonFiles/Formalizer.md">PythonFiles/Formalizer.md</a>
+          <a href="PythonFiles/Verifier.md">PythonFiles/Verifier.md</a>
+          <a href="PythonFiles/Benchmark.md">PythonFiles/Benchmark.md</a>
+          <a href="Changes.md">Changes.md</a>
+          <a href="OverView.md">OverView.md</a>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const files = [
+      {
+        path: 'Main/Solver.py',
+        group: 'Main',
+        role: 'Chạy solver reference: ProblemFormalizer -> Planner -> Executor.',
+        details: ['Không gọi InsideChecker riêng vì Executor đã gọi.', 'Dừng ngay nếu stage con fail.']
+      },
+      {
+        path: 'Main/Tutor.py',
+        group: 'Main',
+        role: 'Tạo reference bằng solver hoặc bằng lời giải giáo viên.',
+        details: ['--reference solver gọi Main/Solver.py.', '--reference teacher gọi ProblemFormalizer + TeacherAnswerFormalizer.']
+      },
+      {
+        path: 'Main/Grader.py',
+        group: 'Main',
+        role: 'Chấm lời giải học sinh dựa trên reference có sẵn hoặc tự gọi Tutor.',
+        details: ['Mặc định dùng Output/Plan.yaml hiện có.', 'Có thể chạy full pipeline với --reference solver/teacher.']
+      },
+      {
+        path: 'Formalizer/ProblemFormalizer.py',
+        group: 'Formalizer',
+        role: 'Trích entity số trực tiếp trong đề bài.',
+        details: ['Validate số digit, fraction, percent, số viết bằng chữ.', 'Thêm helper constants bằng code, không tạo kết quả trung gian do LLM tính.']
+      },
+      {
+        path: 'Formalizer/Solver/Planner.py',
+        group: 'Formalizer',
+        role: 'Sinh Code.txt rồi map pseudo-code sang Plan.yaml symbolic.',
+        details: ['Giảm hallucination do tên biến.', 'Cấm numeric literal trong expr.', 'Có validator logic/backbone dày.']
+      },
+      {
+        path: 'Formalizer/Solver/Executor.py',
+        group: 'Formalizer',
+        role: 'Thực thi Plan.yaml, tính value, reported_expr và formalized_expr.',
+        details: ['Dùng AST safe evaluator.', 'Tự gọi InsideChecker llm và repair bằng LLM nếu cần.']
+      },
+      {
+        path: 'Formalizer/StudentAnswerFormalizer.py',
+        group: 'Formalizer',
+        role: 'Formalize bài học sinh, giữ đúng reported_expr học sinh viết.',
+        details: ['Không sửa phép tính học sinh.', 'Bắt step theo đúng thứ tự equation trong StudentAnswer.txt.']
+      },
+      {
+        path: 'Formalizer/TeacherAnswerFormalizer.py',
+        group: 'Formalizer',
+        role: 'Formalize lời giải giáo viên thành reference plan.',
+        details: ['Ghi TeacherPlan/TeacherAnswerEntities để debug.', 'Đồng thời ghi Plan/PlanEntities để checker dùng contract cũ.']
+      },
+      {
+        path: 'Formalizer/Mapper.py',
+        group: 'Formalizer',
+        role: 'Map entity student với entity reference.',
+        details: ['Auto-map input/target ban đầu.', 'Map entity trung gian bằng expression signature và formalized_expr.']
+      },
+      {
+        path: 'Verifier/InsideChecker.py',
+        group: 'Verifier',
+        role: 'Check lỗi nội tại của một plan/entities.',
+        details: ['Mode llm ghi Error.yaml.', 'Mode student append Diagnosis.yaml và update Wrong.yaml.']
+      },
+      {
+        path: 'Verifier/CompareChecker.py',
+        group: 'Verifier',
+        role: 'So sánh reference với student sau Mapper.',
+        details: ['Check wrong relationship, different calculation, all right, combine/step separation/reverse.', 'Không hạ Wrong.yaml từ Yes về No.']
+      },
+      {
+        path: 'Verifier/LLMChecker.py',
+        group: 'Verifier',
+        role: 'Fallback/review bằng LLM khi symbolic pipeline mơ hồ hoặc không formalize được.',
+        details: ['Có mode teacher, review, auto.', 'Chưa nối mặc định vào benchmark pipeline chính.']
+      },
+      {
+        path: 'Benchmark/RunSolveBenchmark.py',
+        group: 'Benchmark',
+        role: 'Chạy Main/Solver.py trên benchmark và so target với official answer.',
+        details: ['Hỗ trợ workers, indices, resume, dashboard.', 'Workspace tạm khi chạy song song.']
+      },
+      {
+        path: 'Benchmark/RunVerifyBenchmark.py',
+        group: 'Benchmark',
+        role: 'Chạy Main/Grader.py --reference teacher trên benchmark verify.',
+        details: ['So Diagnosis/Wrong với cột type/wrong.', 'Lưu folder lỗi theo id và dashboard.']
+      },
+      {
+        path: 'Benchmark/RunBaseVerifyBenchmark.py',
+        group: 'Benchmark',
+        role: 'Chạy model base trực tiếp làm baseline verifier.',
+        details: ['Không dùng symbolic pipeline.', 'Có label rubric, soft metrics và rebuild-report-only.']
+      }
+    ];
+
+    let active = 'All';
+    const grid = document.getElementById('fileGrid');
+    const search = document.getElementById('search');
+    const buttons = [...document.querySelectorAll('button[data-filter]')];
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[char]));
+    }
+
+    function render() {
+      const query = search.value.trim().toLowerCase();
+      const visible = files.filter(file => {
+        const groupOk = active === 'All' || file.group === active;
+        const haystack = [file.path, file.group, file.role, ...file.details].join(' ').toLowerCase();
+        return groupOk && (!query || haystack.includes(query));
+      });
+
+      grid.innerHTML = visible.map(file => `
+        <article class="file-card">
+          <h3><code>${escapeHtml(file.path)}</code><span class="badge ${escapeHtml(file.group)}">${escapeHtml(file.group)}</span></h3>
+          <p>${escapeHtml(file.role)}</p>
+          <ul>${file.details.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+        </article>
+      `).join('');
+    }
+
+    buttons.forEach(button => {
+      button.addEventListener('click', () => {
+        active = button.dataset.filter;
+        buttons.forEach(item => item.classList.toggle('active', item === button));
+        render();
+      });
+    });
+    search.addEventListener('input', render);
+    render();
+  </script>
+</body>
+</html>
+

@@ -44,12 +44,14 @@ Output chính:
 LLM nếu InsideChecker báo lỗi, nên `Main/Solver.py` không gọi InsideChecker thêm
 lần nữa.
 
-### Full pipeline
+### Grader pipeline
 
-`Main/Main.py` chạy pipeline đầy đủ:
+`Main/Grader.py` chạy pipeline chấm lời giải học sinh. Nếu dùng
+`--reference solver` hoặc `--reference teacher`, nó gọi `Main/Tutor.py` trước để
+tạo reference.
 
 ```text
-Solver
+Tutor --reference solver/teacher
 StudentAnswerFormalizer
 InsideChecker --mode student
 Mapper
@@ -262,9 +264,9 @@ Mở rộng hiện tại và mục đích:
 - Ghi vào `Output/Diagnosis.yaml`, không dùng spelling sai `Diagonosis.yaml`, để
   các checker downstream đọc đúng một file diagnosis.
 
-### `Main/Solver.py` và `Main/Main.py`
+### `Main/Solver.py`, `Main/Tutor.py` và `Main/Grader.py`
 
-Hai file này là phần bổ sung ngoài prompt gốc.
+Các file này là phần bổ sung ngoài prompt gốc.
 
 Mở rộng hiện tại và mục đích:
 
@@ -274,9 +276,12 @@ Mở rộng hiện tại và mục đích:
 - `Main/Solver.py` không gọi InsideChecker riêng vì `Executor.py` đã tự gọi
   InsideChecker và repair. Mục đích là tránh check trùng và tránh repair hai
   lần trên cùng một plan.
-- `Main/Main.py` gom full pipeline:
-  `Solver -> StudentAnswerFormalizer -> InsideChecker student -> Mapper -> CompareChecker`.
-  Mục đích là có một entrypoint chạy toàn bộ quy trình chấm lời giải học sinh.
+- `Main/Tutor.py` tạo reference bằng solver hoặc lời giải giáo viên. Mục đích là
+  tách riêng phần tạo lời giải chuẩn khỏi phần chấm.
+- `Main/Grader.py` chạy phần chấm:
+  `StudentAnswerFormalizer -> InsideChecker student -> Mapper -> CompareChecker`.
+  Mục đích là có thể chấm lại nhiều bài học sinh trên cùng một reference mà
+  không gọi solver lại.
 - Các stage được chạy bằng subprocess theo thứ tự. Mục đích là mỗi module vẫn có
   thể chạy độc lập, nhưng khi cần thì có pipeline tổng hợp.
 
@@ -450,7 +455,8 @@ Input/
 
 Main/
   Solver.py
-  Main.py
+  Tutor.py
+  Grader.py
 
 Formalizer/
   ProblemFormalizer.py

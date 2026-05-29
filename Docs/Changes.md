@@ -134,15 +134,19 @@ Các thay đổi chính:
   dùng sai nếu học sinh đọc sai đề.
 - Ghi diagnosis vào `Output/Diagnosis.yaml` và `Wrong.yaml`.
 
-## `Main/Solver.py` và `Main/Main.py`
+## `Main/Solver.py`, `Main/Tutor.py` và `Main/Grader.py`
 
-Hai file pipeline này không có trong prompt PDF ban đầu dưới dạng file riêng.
+Các file pipeline này không có trong prompt PDF ban đầu dưới dạng file riêng.
 
 - `Main/Solver.py` chạy pipeline lời giải chuẩn:
   `ProblemFormalizer -> Planner -> Executor`.
 - `Main/Solver.py` không gọi InsideChecker riêng vì Executor đã gọi và repair.
-- `Main/Main.py` chạy pipeline đầy đủ:
-  `Solver -> StudentAnswerFormalizer -> InsideChecker --mode student -> Mapper -> CompareChecker`.
+- `Main/Tutor.py` tạo reference bằng một trong hai luồng:
+  `solver` hoặc `teacher`.
+- `Main/Grader.py` chấm lời giải học sinh dựa trên reference có sẵn, hoặc tự gọi
+  `Tutor.py` trước với `--reference solver` / `--reference teacher`.
+- Full pipeline hiện tại chạy bằng:
+  `python3 Main/Grader.py --reference solver`.
 
 ## `Benchmark/RunSolveBenchmark.py`
 
