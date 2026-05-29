@@ -1,12 +1,12 @@
 step1:
-  expr: morning_coffee_price + afternoon_coffee_price
-  result: intermediate_entity
-  result_unit: dollars
-  result_grand_unit: dollars
-  reported_expr: 3.00 + 2.50 = 5.50
+  expr: notebooks + pens_more_than_notebooks
+  result: pens
+  result_unit: pens
+  result_grand_unit: items
+  reported_expr: 30 + 50 = 80
 step2:
-  expr: intermediate_entity * days
-  result: total_cost
-  result_unit: dollars
-  result_grand_unit: dollars
-  reported_expr: 5.50 * 20 = 110.00
+  expr: notebooks + pens
+  result: total_items
+  result_unit: items
+  result_grand_unit: items
+  reported_expr: 30 + 80 = 110

@@ -1,30 +1,18 @@
-coffees_per_day:
-  value: 2
-  unit: coffees
+notebooks:
+  value: 30
+  unit: notebooks
   location: input
-  grand_unit: coffees
-  source: 2 coffees a day
-morning_coffee_price:
-  value: 3.0
-  unit: dollars
+  grand_unit: items
+  source: there are 30 notebooks on the shelf
+pens_more_than_notebooks:
+  value: 50
+  unit: pens
   location: input
-  grand_unit: dollars
-  source: double espresso for $3.00 every morning
-afternoon_coffee_price:
-  value: 2.5
-  unit: dollars
-  location: input
-  grand_unit: dollars
-  source: iced coffee for $2.50
-days:
-  value: 20
-  unit: days
-  location: input
-  grand_unit: null
-  source: 20 days
-total_cost:
+  grand_unit: items
+  source: 50 more pens than notebooks
+total_items:
   value: null
-  unit: dollars
+  unit: items
   location: target
-  grand_unit: dollars
-  source: How much money has she spent on coffee?
+  grand_unit: items
+  source: how many notebooks and pens, does he have altogether?

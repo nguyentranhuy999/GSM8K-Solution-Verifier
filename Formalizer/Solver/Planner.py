@@ -4,7 +4,8 @@ Formalizer/Solver/Planner.py
 Nhiệm vụ:
 - Đọc đề bài từ Input/Problem.txt
 - Đọc các thực thể đề bài từ Output/ProblemEntities.yaml
-- Gọi LLM qua OpenRouter để sinh kế hoạch giải bài toán
+- Gọi LLM qua OpenRouter để sinh lời giải dạng pseudo-code trong Output/Code.txt
+- Dùng code Python map số literal trong pseudo-code về ProblemEntities để sinh Plan.yaml
 - Ghi kế hoạch vào Output/Plan.yaml
 - Sau khi có plan, dùng code Python để thêm các thực thể result vào Output/PlanEntities.yaml
 - Ghi trạng thái Pass Planner / Fail Planner vào Output/Log.yaml
@@ -15,7 +16,9 @@ OPENROUTER_MODEL=google/gemini-2.0-flash-001  # optional
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1/chat/completions  # optional
 
 Ghi chú:
-- LLM chỉ sinh kế hoạch symbolic, không phải nơi thực thi số học chính.
+- LLM giải bài ở dạng pseudo-code trước, không trực tiếp chọn entity để ghép công thức.
+- Planner map số trong pseudo-code về entity input, rồi mới tạo plan symbolic.
+- LLM không phải nơi thực thi số học chính.
 - Các bước trong plan được đặt step1, step2, step3, ...
 - Mỗi step gồm:
   - expr
@@ -32,6 +35,7 @@ import os
 import re
 import sys
 import ast
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -46,6 +50,7 @@ OUTPUT_DIR = ROOT_DIR / "Output"
 PROBLEM_ENTITIES_PATH = OUTPUT_DIR / "ProblemEntities.yaml"
 PLAN_PATH = OUTPUT_DIR / "Plan.yaml"
 PLAN_ENTITIES_PATH = OUTPUT_DIR / "PlanEntities.yaml"
+CODE_PATH = OUTPUT_DIR / "Code.txt"
 LOG_PATH = OUTPUT_DIR / "Log.yaml"
 
 DEFAULT_MODEL = "google/gemini-2.0-flash-001"
@@ -92,6 +97,11 @@ def write_yaml_file(path: Path, data: Dict[str, Any]) -> None:
             sort_keys=False,
             default_flow_style=False,
         )
+
+
+def write_text_file(path: Path, text: str) -> None:
+    ensure_dirs()
+    path.write_text(text.strip() + "\n", encoding="utf-8")
 
 
 def write_log(status: str, message: str = "") -> None:
@@ -160,27 +170,95 @@ def validate_problem_entities(entities: Dict[str, Any]) -> Dict[str, Dict[str, A
     return normalized
 
 
+def neutral_source_hint(name: str, entity: Dict[str, Any]) -> Optional[str]:
+    value = normalize_empty(entity.get("value"))
+    unit = normalize_empty(entity.get("unit"))
+
+    if name == "identity_multiplier" and value == 1:
+        return "implicit multiplicative identity 1"
+    if name == "percentage_scale" and value == 100:
+        return "scale factor for converting a fraction to a percentage: 100"
+    if name.startswith("unit_conversion_") and value is not None:
+        match = re.match(r"^unit_conversion_(.+)_per_(.+)$", name)
+        if match:
+            numerator_unit = match.group(1).replace("_", " ")
+            denominator_unit = match.group(2).replace("_", " ")
+            return (
+                "standard conversion factor: "
+                f"{value} {numerator_unit} per {denominator_unit}"
+            )
+        unit_text = f" {unit}" if unit else ""
+        return f"standard conversion factor {value}{unit_text}"
+    return None
+
+
+def alias_problem_entities(
+    problem_entities: Dict[str, Dict[str, Any]],
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, str], Dict[str, str]]:
+    """
+    Tạo view trung lập cho Planner.
+
+    LLM chỉ thấy e1/e2/.../target để giảm xu hướng suy luận từ tên entity thật
+    như pens_more_than_notebooks. Sau khi LLM trả plan, code dịch alias về tên
+    entity thật trước khi ghi Output/Plan.yaml.
+    """
+    target_name = target_entity_name(problem_entities)
+    aliased: Dict[str, Dict[str, Any]] = {}
+    alias_to_real: Dict[str, str] = {}
+    real_to_alias: Dict[str, str] = {}
+    next_index = 1
+
+    for real_name, entity in problem_entities.items():
+        if real_name == target_name:
+            alias = "target"
+        else:
+            alias = f"e{next_index}"
+            next_index += 1
+
+        alias_entity = dict(entity)
+        if normalize_empty(alias_entity.get("source")) is None:
+            hint = neutral_source_hint(real_name, alias_entity)
+            if hint:
+                alias_entity["source"] = hint
+
+        aliased[alias] = alias_entity
+        alias_to_real[alias] = real_name
+        real_to_alias[real_name] = alias
+
+    return aliased, alias_to_real, real_to_alias
+
+
 def normalize_empty(value: Any) -> Any:
     if value == "" or value == "null" or value == "None":
         return None
     return value
 
 
+# Legacy direct-plan prompt path. run() now uses call_openrouter_code() and
+# plan_from_code(), but these helpers are kept for comparison while the Planner
+# design is still changing.
 def build_system_prompt() -> str:
     return """
 Bạn là một Planner sinh kế hoạch giải toán symbolic từ đề bài và danh sách entity đã formalize.
 
+Bạn sẽ nhận các entity dưới dạng handle trung tính:
+- Input entity được đặt tên e1, e2, e3, ...
+- Target entity luôn được đặt tên target.
+- Các handle e1/e2/... không có ý nghĩa ngữ nghĩa. Không suy luận quan hệ toán học từ tên handle.
+- Muốn hiểu một handle biểu diễn số nào, hãy đọc value, unit, grand_unit, source và đối chiếu với Đề bài gốc.
+- Khi viết expr/result, chỉ dùng các handle này và result trung gian bạn tự tạo. Không dùng tên entity thật nếu nó không xuất hiện trong input.
+
 Nhiệm vụ:
 - Giải bài toán từ Đề bài gốc.
-- Dùng ProblemEntities như dictionary các hằng số đã được grounded trong đề: khi lời giải cần một số, dùng tên entity tương ứng thay vì viết số literal.
-- ProblemEntities KHÔNG phải danh sách các biến bắt buộc phải dùng. Không dùng một entity chỉ vì nó tồn tại.
+- Dùng ProblemEntities như dictionary các hằng số đã được grounded trong đề: khi lời giải cần một số, dùng handle entity tương ứng thay vì viết số literal.
+- ProblemEntities KHÔNG phải danh sách các biến bắt buộc phải dùng. Không dùng một handle chỉ vì nó tồn tại.
 - Không tự thêm input entity mới không có trong ProblemEntities.
 - Được tạo entity trung gian bằng trường result.
-- Bước cuối cùng phải tạo ra đúng entity target đã có trong ProblemEntities.
+- Bước cuối cùng phải có result là target.
 - Không thực hiện giải thích, chỉ trả YAML thuần.
 
 Mỗi bước có đúng 4 trường:
-- expr: biểu thức tính toán symbolic, chỉ dùng tên entity/result. Ví dụ: morning_coffee_price + afternoon_coffee_price
+- expr: biểu thức tính toán symbolic, chỉ dùng handle entity/result. Ví dụ: e1 + e2
 - result: tên entity được tạo ra bởi bước đó.
 - result_unit: đơn vị của result. Với scalar có thể để rỗng/null.
 - result_grand_unit: grand unit của result theo target. Với scalar có thể để rỗng/null.
@@ -192,7 +270,7 @@ Quy tắc step:
 - expr chỉ được dùng tên entity/result đã có và toán tử đơn giản: +, -, *, /, parentheses.
 - Tuyệt đối không viết số literal trong expr, kể cả 0, 1, 2, 36, 60, 0.5, 1/3, hay số mũ như ** 2.
 - Nếu lời giải cần một hệ số/dữ kiện số trong đề, hệ số đó phải là entity input trong ProblemEntities.
-- Nếu ProblemEntities có identity_multiplier thì dùng entity này cho hệ số 1 trong các biểu thức như total = base * (identity_multiplier + multiplier), remainder = total * (identity_multiplier - fraction).
+- Nếu ProblemEntities có handle có source là "implicit multiplicative identity 1" thì dùng handle này cho hệ số 1 trong các biểu thức như total = base * (identity + multiplier), remainder = total * (identity - fraction).
 - Nếu cần hệ số trung gian như 1, hãy tạo từ entity đã có. Ví dụ: identity_multiplier = growth_multiplier / growth_multiplier.
 - Nếu cần đổi đơn vị trực tiếp từ một entity sang unit khác, tạo một step riêng chỉ có source entity trong expr.
   Ví dụ: expr: road_length, result: road_length_kilometers, result_unit: kilometers.
@@ -205,8 +283,8 @@ Quy tắc không ảo giác:
 - Không cần dùng mọi input entity. Entity có thể chỉ là context, paraphrase, summary hoặc constraint của câu chữ.
 - Hãy chọn các entity theo lời giải toán từ đề bài; bỏ qua entity nếu dùng nó sẽ đếm trùng hoặc không cần thiết.
 - ProblemEntities có thể có field source. Đây là binding gốc của số trong đề bài.
-  Khi tên entity và source/problem text có vẻ mâu thuẫn, phải tin source và đề bài hơn tên entity.
-  Tên biến chỉ là handle để viết expr, không phải bằng chứng duy nhất về quan hệ toán học.
+  Handle chỉ là nhãn để viết expr, không phải bằng chứng về quan hệ toán học.
+  Nếu một handle có value đúng nhưng source/problem text cho thấy nó chỉ là điều kiện, ngưỡng, context hoặc count đã được liệt kê bởi các thành phần khác, không dùng handle đó trong phép tính.
 - Không tạo bước không cần thiết.
 - Không tạo bước chỉ copy một entity sang entity khác. Nếu một step đã tính ra
   giá trị cuối cùng thì đặt result của chính step đó là target.
@@ -311,14 +389,14 @@ Quy tắc đơn vị:
 
 Định dạng output bắt buộc:
 step1:
-  expr: entity_a + entity_b
+  expr: e1 + e2
   result: intermediate_entity
   result_unit: dollars
   result_grand_unit: dollars
 
 step2:
-  expr: intermediate_entity * days
-  result: target_entity
+  expr: intermediate_entity * e3
+  result: target
   result_unit: dollars
   result_grand_unit: dollars
 
@@ -354,7 +432,7 @@ Hãy sinh kế hoạch giải toán cho đề bài sau.
 Đề bài:
 {problem}
 
-ProblemEntities.yaml:
+ProblemEntityHandles.yaml:
 {entities_yaml}
 {retry_note}
 """.strip()
@@ -410,6 +488,108 @@ def call_openrouter(
         raise PlannerError(f"Response OpenRouter không đúng định dạng: {response.text[:1000]}") from exc
 
 
+def build_code_system_prompt() -> str:
+    return """
+Bạn là Solver viết lời giải toán dưới dạng pseudo-code Python tối giản.
+
+Mục tiêu:
+- Giải bài toán từ đề bài gốc như khi giải text thuần.
+- Chỉ viết các phép gán cần thiết để ra đáp án.
+- Không dùng bảng entity, không dùng tên entity formalized.
+- Code chỉ là intermediate để hệ thống map số sang entity sau đó.
+
+Quy tắc output:
+- Chỉ trả code thuần, không Markdown, không ``` và không giải thích.
+- Mỗi dòng là một phép gán dạng snake_case = expression.
+- Dòng cuối phải là answer = expression.
+- Expression chỉ dùng biến đã gán trước đó, số literal trong đề bài, và toán tử + - * / với ngoặc.
+- Không dùng import, function, print, if/else, list, dict, loop, comparison.
+- Code phải có 2 pha rõ ràng:
+  Pha 1: bind từng dữ kiện số trong đề vào biến có tên mang nghĩa nguồn.
+  Pha 2: tính toán chỉ bằng các biến đã bind, không viết số literal trực tiếp trong dòng tính toán.
+- Nếu cùng một số xuất hiện với 2 ý nghĩa khác nhau, phải tạo 2 biến khác nhau.
+  Ví dụ 7 tokens spent và seven times as many phải là spent_on_ski_ball = 7 và parent_token_multiplier = 7.
+- Với fraction viết bằng chữ như a third, one third, a fourth, half:
+  bind thành biến fraction trước, ví dụ pacman_fraction = 1 / 3, candy_crush_fraction = 1 / 4.
+  Sau đó dùng phép nhân: wasted_on_pacman = starting_tokens * pacman_fraction.
+  Không viết starting_tokens / 3 hoặc starting_tokens / 4 trong dòng tính toán.
+- Với phần trăm N%, bind thành biến percentage trước, ví dụ discount_percentage = 20 / 100 hoặc discount_percentage = 0.2.
+  Sau đó dùng biến này trong phép tính.
+- Không ghi kết quả đã tính ra như một số literal nếu số đó không được cho trực tiếp trong đề.
+  Ví dụ đúng: pens = notebooks + 50; answer = notebooks + pens.
+  Ví dụ sai: answer = 110.
+- Nếu số trong đề viết bằng chữ, hãy viết thành chữ số.
+- Với phần trăm N%, hãy dùng decimal multiplier tương ứng nếu cần nhân, ví dụ 20% -> 0.2.
+- Với "X more than Y", "X fewer than Y", "X less than Y", phải tạo quantity thật trước rồi mới tính tổng nếu đề hỏi tổng.
+  Ví dụ: notebooks = 30; pens = notebooks + 50; answer = notebooks + pens.
+- Với rate/count summary, không nhân đôi nếu đề đã liệt kê từng component.
+  Ví dụ mua morning coffee và afternoon coffee mỗi ngày thì daily_cost = morning_price + afternoon_price.
+""".strip()
+
+
+def build_code_user_prompt(problem: str, previous_error: Optional[str] = None) -> str:
+    retry_note = ""
+    if previous_error:
+        retry_note = f"""
+
+Code trước bị reject vì lỗi:
+{previous_error}
+
+Hãy viết lại code. Giải từ đề bài trước, không shortcut thành final number.
+""".rstrip()
+
+    return f"""
+Hãy viết pseudo-code Python tối giản để giải bài toán sau.
+
+Đề bài:
+{problem}
+{retry_note}
+""".strip()
+
+
+def call_openrouter_code(problem: str, previous_error: Optional[str] = None) -> str:
+    load_dotenv(ROOT_DIR / ".env")
+    load_dotenv()
+
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise PlannerError("Thiếu OPENROUTER_API_KEY trong file .env hoặc biến môi trường.")
+
+    model = os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
+    base_url = os.getenv("OPENROUTER_BASE_URL", DEFAULT_BASE_URL)
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": os.getenv("OPENROUTER_HTTP_REFERER", "http://localhost"),
+        "X-Title": os.getenv("OPENROUTER_X_TITLE", "GSM8K-Solution-Verifier"),
+    }
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": build_code_system_prompt()},
+            {"role": "user", "content": build_code_user_prompt(problem, previous_error=previous_error)},
+        ],
+        "temperature": 0,
+        "max_tokens": int(os.getenv("OPENROUTER_MAX_TOKENS", DEFAULT_MAX_TOKENS)),
+    }
+
+    try:
+        response = requests.post(base_url, headers=headers, json=payload, timeout=90)
+    except requests.RequestException as exc:
+        raise PlannerError(f"Không gọi được OpenRouter: {exc}") from exc
+
+    if response.status_code >= 400:
+        raise PlannerError(f"OpenRouter trả lỗi {response.status_code}: {response.text[:1000]}")
+
+    try:
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        raise PlannerError(f"Response OpenRouter không đúng định dạng: {response.text[:1000]}") from exc
+
+
 def strip_markdown_fence(text: str) -> str:
     text = text.strip()
     fenced = re.match(r"^```(?:yaml|yml)?\s*(.*?)\s*```$", text, flags=re.DOTALL | re.IGNORECASE)
@@ -432,9 +612,583 @@ def parse_plan(text: str) -> Dict[str, Any]:
     return parsed
 
 
+IDENTIFIER_RE = re.compile(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b")
+
+
+def replace_expr_tokens(expr: str, mapping: Dict[str, str]) -> str:
+    """Thay token entity/result trong expr mà không đụng vào substring."""
+    return IDENTIFIER_RE.sub(lambda match: mapping.get(match.group(0), match.group(0)), expr)
+
+
+def unique_result_name(name: str, reserved: set[str]) -> str:
+    if name not in reserved:
+        return name
+
+    base = f"{name}_result"
+    candidate = base
+    index = 2
+    while candidate in reserved:
+        candidate = f"{base}_{index}"
+        index += 1
+    return candidate
+
+
+def dealias_plan(
+    alias_plan: Dict[str, Dict[str, Any]],
+    alias_to_real: Dict[str, str],
+    real_problem_entities: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Dịch plan sinh trên e1/e2/.../target về tên entity thật.
+
+    Intermediate result của LLM được giữ nguyên trừ khi đụng tên input/target thật.
+    """
+    reserved = set(real_problem_entities.keys())
+    result_mapping: Dict[str, str] = {}
+
+    for step in alias_plan.values():
+        alias_result = step["result"]
+        if alias_result == "target":
+            real_result = alias_to_real["target"]
+        else:
+            real_result = unique_result_name(alias_result, reserved)
+
+        result_mapping[alias_result] = real_result
+        reserved.add(real_result)
+
+    token_mapping = {**alias_to_real, **result_mapping}
+    real_plan: Dict[str, Dict[str, Any]] = {}
+
+    for step_name, step in alias_plan.items():
+        real_plan[step_name] = {
+            "expr": replace_expr_tokens(step["expr"], token_mapping),
+            "result": result_mapping[step["result"]],
+            "result_unit": step["result_unit"],
+            "result_grand_unit": step["result_grand_unit"],
+        }
+
+    return real_plan
+
+
 NUMERIC_LITERAL_RE = re.compile(
     r"(?<![A-Za-z0-9_])[-+]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][-+]?\d+)?(?![A-Za-z0-9_])"
 )
+
+ANSWER_NAMES = {"answer", "final_answer", "result", "target"}
+CODE_ASSIGNMENT_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$")
+ALLOWED_CODE_BINOPS = (ast.Add, ast.Sub, ast.Mult, ast.Div)
+ALLOWED_CODE_UNARYOPS = (ast.UAdd, ast.USub)
+
+
+def strip_code_fence(text: str) -> str:
+    text = text.strip()
+    fenced = re.match(r"^```(?:python|py)?\s*(.*?)\s*```$", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        return fenced.group(1).strip()
+    return text
+
+
+def parse_code_assignments(text: str) -> List[Tuple[str, str, ast.AST]]:
+    clean_text = strip_code_fence(text)
+    assignments: List[Tuple[str, str, ast.AST]] = []
+
+    for raw_line in clean_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("return "):
+            line = f"answer = {line[len('return '):].strip()}"
+        if line.startswith("print(") and line.endswith(")"):
+            line = f"answer = {line[len('print('):-1].strip()}"
+
+        match = CODE_ASSIGNMENT_RE.match(line)
+        if not match:
+            raise PlannerError(f"Code line không phải assignment hợp lệ: {raw_line!r}")
+
+        lhs = normalize_code_name(match.group(1))
+        expr = match.group(2).strip()
+        if not lhs:
+            raise PlannerError(f"Tên biến code không hợp lệ: {match.group(1)!r}")
+
+        try:
+            tree = ast.parse(expr, mode="eval")
+        except SyntaxError as exc:
+            raise PlannerError(f"Expression code không parse được: {expr!r}") from exc
+
+        validate_code_expr_ast(tree.body, expr)
+        assignments.append((lhs, expr, tree.body))
+
+    if not assignments:
+        raise PlannerError("LLM không trả assignment code nào.")
+
+    last_lhs = assignments[-1][0]
+    if last_lhs not in ANSWER_NAMES:
+        raise PlannerError("Dòng cuối của Code.txt phải gán vào answer.")
+
+    return assignments
+
+
+def normalize_code_name(name: str) -> str:
+    name = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+    name = re.sub(r"[^a-z0-9_]+", "_", name).strip("_")
+    name = re.sub(r"_+", "_", name)
+    if not re.match(r"^[a-z][a-z0-9_]*$", name):
+        return ""
+    return name
+
+
+def validate_code_expr_ast(node: ast.AST, expr: str) -> None:
+    if isinstance(node, ast.Expression):
+        validate_code_expr_ast(node.body, expr)
+        return
+    if isinstance(node, ast.BinOp):
+        if not isinstance(node.op, ALLOWED_CODE_BINOPS):
+            raise PlannerError(f"Code expr chỉ được dùng + - * /: {expr!r}")
+        validate_code_expr_ast(node.left, expr)
+        validate_code_expr_ast(node.right, expr)
+        return
+    if isinstance(node, ast.UnaryOp):
+        if not isinstance(node.op, ALLOWED_CODE_UNARYOPS):
+            raise PlannerError(f"Code expr chỉ được dùng unary +/-: {expr!r}")
+        validate_code_expr_ast(node.operand, expr)
+        return
+    if isinstance(node, ast.Name):
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", node.id):
+            raise PlannerError(f"Biến code không hợp lệ trong expr: {node.id!r}")
+        return
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+        return
+    raise PlannerError(f"Code expr chứa cú pháp không được hỗ trợ: {expr!r}")
+
+
+def ast_is_numeric_only(node: ast.AST) -> bool:
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, (int, float)) and not isinstance(node.value, bool)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ALLOWED_CODE_UNARYOPS):
+        return ast_is_numeric_only(node.operand)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ALLOWED_CODE_BINOPS):
+        return ast_is_numeric_only(node.left) and ast_is_numeric_only(node.right)
+    return False
+
+
+def ast_contains_numeric_literal(node: ast.AST) -> bool:
+    return any(
+        isinstance(child, ast.Constant)
+        and isinstance(child.value, (int, float))
+        and not isinstance(child.value, bool)
+        for child in ast.walk(node)
+    )
+
+
+def eval_numeric_ast(node: ast.AST) -> Decimal:
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+        return Decimal(str(node.value))
+    if isinstance(node, ast.UnaryOp):
+        value = eval_numeric_ast(node.operand)
+        if isinstance(node.op, ast.USub):
+            return -value
+        if isinstance(node.op, ast.UAdd):
+            return value
+    if isinstance(node, ast.BinOp):
+        left = eval_numeric_ast(node.left)
+        right = eval_numeric_ast(node.right)
+        if isinstance(node.op, ast.Add):
+            return left + right
+        if isinstance(node.op, ast.Sub):
+            return left - right
+        if isinstance(node.op, ast.Mult):
+            return left * right
+        if isinstance(node.op, ast.Div):
+            if right == 0:
+                raise PlannerError("Code expr chia cho 0.")
+            return left / right
+    raise PlannerError("Không eval được numeric AST.")
+
+
+def decimal_from_entity_value(value: Any) -> Optional[Decimal]:
+    value = normalize_empty(value)
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return Decimal(str(value).replace(",", ""))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def decimals_equal(left: Decimal, right: Decimal) -> bool:
+    return abs(left - right) <= Decimal("0.000000001")
+
+
+def text_terms(text: Any) -> set[str]:
+    return {
+        singularize_token(term)
+        for term in re.findall(r"[a-zA-Z]+", str(text or "").lower())
+        if term
+    }
+
+
+def input_entity_candidates_for_number(
+    value: Decimal,
+    problem_entities: Dict[str, Dict[str, Any]],
+) -> List[str]:
+    candidates: List[str] = []
+    for name, entity in problem_entities.items():
+        if entity.get("location") != "input":
+            continue
+        entity_value = decimal_from_entity_value(entity.get("value"))
+        if entity_value is not None and decimals_equal(value, entity_value):
+            candidates.append(name)
+    return candidates
+
+
+def score_number_entity_candidate(
+    name: str,
+    entity: Dict[str, Any],
+    context_terms: set[str],
+) -> int:
+    entity_terms = set(entity_name_terms(name))
+    entity_terms.update(text_terms(entity.get("unit")))
+    entity_terms.update(text_terms(entity.get("grand_unit")))
+    entity_terms.update(text_terms(entity.get("source")))
+
+    score = 4 * len(context_terms & entity_terms)
+    scalar_context_terms = {
+        "fraction",
+        "percentage",
+        "percent",
+        "multiplier",
+        "times",
+        "ratio",
+        "rate",
+        "scale",
+    }
+    scalar_entity_terms = {
+        "fraction",
+        "percentage",
+        "percent",
+        "multiplier",
+        "times",
+        "ratio",
+        "rate",
+        "scale",
+    }
+    entity_unit = normalize_empty(entity.get("unit"))
+    if entity_unit is None:
+        if context_terms & scalar_context_terms:
+            score += 6
+        else:
+            score -= 5
+    elif context_terms & scalar_context_terms:
+        score -= 4
+    else:
+        score += 5
+
+    if context_terms & scalar_context_terms and entity_terms & scalar_entity_terms:
+        score += 8
+    if "multiplier" in context_terms and {"multiplier", "times"} & entity_terms:
+        score += 8
+
+    if name.startswith("unit_conversion_"):
+        score -= 6
+        if {"convert", "conversion", "per"} & context_terms:
+            score += 6
+    if name == "identity_multiplier":
+        score -= 2
+        if {"one", "self", "host", "identity"} & context_terms:
+            score += 4
+    if "percentage" in entity_terms or "percent" in entity_terms:
+        if {"percent", "percentage", "discount"} & context_terms:
+            score += 4
+    return score
+
+
+def map_number_to_entity(
+    value: Decimal,
+    problem_entities: Dict[str, Dict[str, Any]],
+    context_terms: set[str],
+) -> Optional[str]:
+    candidates = input_entity_candidates_for_number(value, problem_entities)
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda name: score_number_entity_candidate(name, problem_entities[name], context_terms),
+    )
+
+
+def op_symbol(op: ast.operator) -> str:
+    if isinstance(op, ast.Add):
+        return "+"
+    if isinstance(op, ast.Sub):
+        return "-"
+    if isinstance(op, ast.Mult):
+        return "*"
+    if isinstance(op, ast.Div):
+        return "/"
+    raise PlannerError(f"Toán tử không hỗ trợ: {type(op).__name__}")
+
+
+def op_precedence(node: ast.AST) -> int:
+    if isinstance(node, ast.BinOp):
+        if isinstance(node.op, (ast.Mult, ast.Div)):
+            return 2
+        if isinstance(node.op, (ast.Add, ast.Sub)):
+            return 1
+    if isinstance(node, ast.UnaryOp):
+        return 3
+    return 4
+
+
+def parenthesize_child(parent: ast.BinOp, child: ast.AST, rendered: str, *, right: bool) -> str:
+    if not isinstance(child, ast.BinOp):
+        return rendered
+    if op_precedence(child) < op_precedence(parent):
+        return f"({rendered})"
+    if right and isinstance(parent.op, (ast.Sub, ast.Div)) and op_precedence(child) == op_precedence(parent):
+        return f"({rendered})"
+    return rendered
+
+
+def code_context_terms(lhs: str, expr: str) -> set[str]:
+    terms = text_terms(lhs)
+    terms.update(text_terms(expr))
+    return terms
+
+
+def ast_to_symbolic_expr(
+    node: ast.AST,
+    *,
+    lhs: str,
+    raw_expr: str,
+    var_to_entity: Dict[str, str],
+    problem_entities: Dict[str, Dict[str, Any]],
+) -> str:
+    context_terms = code_context_terms(lhs, raw_expr)
+
+    if ast_is_numeric_only(node):
+        value = eval_numeric_ast(node)
+        mapped = map_number_to_entity(value, problem_entities, context_terms)
+        if mapped:
+            return mapped
+        if isinstance(node, ast.Constant):
+            raise PlannerError(
+                f"Không map được số literal {node.value!r} trong code sang input entity."
+            )
+
+    if isinstance(node, ast.Constant):
+        value = Decimal(str(node.value))
+        mapped = map_number_to_entity(value, problem_entities, context_terms)
+        if not mapped:
+            raise PlannerError(f"Không map được số literal {node.value!r} trong code sang input entity.")
+        return mapped
+
+    if isinstance(node, ast.Name):
+        code_name = normalize_code_name(node.id)
+        if code_name in var_to_entity:
+            return var_to_entity[code_name]
+        if code_name in problem_entities and problem_entities[code_name].get("location") == "input":
+            return code_name
+        raise PlannerError(f"Code dùng biến chưa được gán hoặc chưa map được: {node.id!r}")
+
+    if isinstance(node, ast.UnaryOp):
+        operand = ast_to_symbolic_expr(
+            node.operand,
+            lhs=lhs,
+            raw_expr=raw_expr,
+            var_to_entity=var_to_entity,
+            problem_entities=problem_entities,
+        )
+        return f"-{operand}" if isinstance(node.op, ast.USub) else operand
+
+    if isinstance(node, ast.BinOp):
+        left = ast_to_symbolic_expr(
+            node.left,
+            lhs=lhs,
+            raw_expr=raw_expr,
+            var_to_entity=var_to_entity,
+            problem_entities=problem_entities,
+        )
+        right = ast_to_symbolic_expr(
+            node.right,
+            lhs=lhs,
+            raw_expr=raw_expr,
+            var_to_entity=var_to_entity,
+            problem_entities=problem_entities,
+        )
+        left = parenthesize_child(node, node.left, left, right=False)
+        right = parenthesize_child(node, node.right, right, right=True)
+        return f"{left} {op_symbol(node.op)} {right}"
+
+    raise PlannerError(f"Không chuyển được code expr sang symbolic expr: {raw_expr!r}")
+
+
+def single_name_in_ast(node: ast.AST) -> Optional[str]:
+    return normalize_code_name(node.id) if isinstance(node, ast.Name) else None
+
+
+def unit_matches_result_name(unit: Any, result_name: str) -> bool:
+    unit_terms = text_terms(unit)
+    if not unit_terms:
+        return False
+    return bool(unit_terms & entity_name_terms(result_name))
+
+
+def unit_info_for_token(
+    token: str,
+    problem_entities: Dict[str, Dict[str, Any]],
+    plan: Dict[str, Dict[str, Any]],
+) -> Tuple[Optional[str], Optional[str]]:
+    if token in problem_entities:
+        entity = problem_entities[token]
+        return normalize_empty(entity.get("unit")), normalize_empty(entity.get("grand_unit"))
+    for step in plan.values():
+        if step.get("result") == token:
+            return normalize_empty(step.get("result_unit")), normalize_empty(step.get("result_grand_unit"))
+    return None, None
+
+
+def infer_plan_units(
+    symbolic_expr: str,
+    result_name: str,
+    problem_entities: Dict[str, Dict[str, Any]],
+    plan: Dict[str, Dict[str, Any]],
+) -> Tuple[Optional[str], Optional[str]]:
+    target_name = target_entity_name(problem_entities)
+    target = problem_entities[target_name]
+    if result_name == target_name:
+        return normalize_empty(target.get("unit")), normalize_empty(target.get("grand_unit"))
+
+    token_infos = [
+        unit_info_for_token(token, problem_entities, plan)
+        for token in extract_expr_tokens(symbolic_expr)
+    ]
+    token_infos = [(unit, grand) for unit, grand in token_infos if unit is not None or grand is not None]
+    if not token_infos:
+        return None, None
+
+    for unit, grand in token_infos:
+        if unit_matches_result_name(unit, result_name):
+            return unit, grand or unit
+
+    non_scalar_units = [unit for unit, _ in token_infos if unit is not None]
+    non_scalar_grands = [grand for _, grand in token_infos if grand is not None]
+
+    unique_units = list(dict.fromkeys(non_scalar_units))
+    unique_grands = list(dict.fromkeys(non_scalar_grands))
+
+    if len(unique_units) == 1:
+        return unique_units[0], unique_grands[0] if unique_grands else unique_units[0]
+    if len(unique_grands) == 1:
+        return unique_grands[0], unique_grands[0]
+
+    return unique_units[0] if unique_units else None, unique_grands[0] if unique_grands else None
+
+
+def rename_plan_result(
+    plan: Dict[str, Dict[str, Any]],
+    old_result: str,
+    new_result: str,
+    problem_entities: Dict[str, Dict[str, Any]],
+) -> bool:
+    target = problem_entities[new_result]
+    for step in plan.values():
+        if step.get("result") != old_result:
+            continue
+        step["result"] = new_result
+        step["result_unit"] = normalize_empty(target.get("unit"))
+        step["result_grand_unit"] = normalize_empty(target.get("grand_unit"))
+        return True
+    return False
+
+
+def plan_from_code(
+    code_text: str,
+    problem_entities: Dict[str, Dict[str, Any]],
+    problem: Optional[str] = None,
+) -> Dict[str, Dict[str, Any]]:
+    assignments = parse_code_assignments(code_text)
+    target_name = target_entity_name(problem_entities)
+    var_to_entity: Dict[str, str] = {}
+    plan: Dict[str, Dict[str, Any]] = {}
+
+    for index, (lhs, raw_expr, expr_ast) in enumerate(assignments):
+        is_last = index == len(assignments) - 1
+        wants_target = lhs in ANSWER_NAMES or is_last
+        context_terms = code_context_terms(lhs, raw_expr)
+
+        if ast_is_numeric_only(expr_ast):
+            mapped = map_number_to_entity(eval_numeric_ast(expr_ast), problem_entities, context_terms)
+            if mapped and not wants_target:
+                var_to_entity[lhs] = mapped
+                continue
+            raise PlannerError(
+                f"Assignment {lhs} = {raw_expr} chỉ là số literal/derived number. "
+                "Code phải giữ phép tính symbolic thay vì ghi đáp án hoặc subtotal đã tính sẵn."
+            )
+
+        if ast_contains_numeric_literal(expr_ast):
+            raise PlannerError(
+                f"Assignment {lhs} = {raw_expr} đang dùng số literal trực tiếp trong dòng tính toán. "
+                "Hãy bind dữ kiện số/fraction/percentage thành biến riêng trước, rồi chỉ dùng biến trong phép tính. "
+                "Ví dụ a third phải là pacman_fraction = 1 / 3; wasted = tokens * pacman_fraction, "
+                "không viết wasted = tokens / 3."
+            )
+
+        copied_name = single_name_in_ast(expr_ast)
+        if copied_name is not None:
+            if copied_name not in var_to_entity:
+                raise PlannerError(f"Code copy từ biến chưa map được: {copied_name!r}")
+            source_entity = var_to_entity[copied_name]
+            if wants_target:
+                if source_entity == target_name:
+                    var_to_entity[lhs] = target_name
+                    continue
+                if rename_plan_result(plan, source_entity, target_name, problem_entities):
+                    for var_name, entity_name in list(var_to_entity.items()):
+                        if entity_name == source_entity:
+                            var_to_entity[var_name] = target_name
+                    var_to_entity[lhs] = target_name
+                    continue
+                target = problem_entities[target_name]
+                plan[f"step{len(plan) + 1}"] = {
+                    "expr": source_entity,
+                    "result": target_name,
+                    "result_unit": normalize_empty(target.get("unit")),
+                    "result_grand_unit": normalize_empty(target.get("grand_unit")),
+                }
+                var_to_entity[lhs] = target_name
+                continue
+            var_to_entity[lhs] = source_entity
+            continue
+
+        symbolic_expr = ast_to_symbolic_expr(
+            expr_ast,
+            lhs=lhs,
+            raw_expr=raw_expr,
+            var_to_entity=var_to_entity,
+            problem_entities=problem_entities,
+        )
+
+        result_name = target_name if wants_target else unique_result_name(lhs, set(problem_entities) | set(var_to_entity.values()))
+        result_unit, result_grand_unit = infer_plan_units(symbolic_expr, result_name, problem_entities, plan)
+        step_name = f"step{len(plan) + 1}"
+        plan[step_name] = {
+            "expr": symbolic_expr,
+            "result": result_name,
+            "result_unit": result_unit,
+            "result_grand_unit": result_grand_unit,
+        }
+        var_to_entity[lhs] = result_name
+
+    if not plan:
+        raise PlannerError("Code không tạo ra bước tính toán nào cho Plan.yaml.")
+
+    normalized_plan = validate_and_normalize_plan(plan, problem_entities, problem=problem)
+    validate_relative_difference_entities_resolved(normalized_plan, problem_entities)
+    return normalized_plan
 
 RELATIVE_DIFFERENCE_MARKERS = {
     "_more_than_": "+",
@@ -2190,28 +2944,34 @@ def run() -> None:
         previous_error: Optional[str] = None
         last_validation_error: Optional[Exception] = None
         plan: Optional[Dict[str, Dict[str, Any]]] = None
+        code_text: Optional[str] = None
+        last_code_response: Optional[str] = None
 
         for _ in range(max_retries()):
-            raw_response = call_openrouter(
+            raw_response = call_openrouter_code(
                 problem,
-                problem_entities,
                 previous_error=previous_error,
             )
+            last_code_response = raw_response
 
             try:
-                raw_plan = parse_plan(raw_response)
-                candidate_plan = validate_and_normalize_plan(raw_plan, problem_entities, problem=problem)
+                candidate_plan = plan_from_code(raw_response, problem_entities, problem=problem)
             except PlannerError as exc:
                 previous_error = str(exc)
                 last_validation_error = exc
                 continue
 
             plan = candidate_plan
+            code_text = strip_code_fence(raw_response)
             break
 
         if plan is None:
+            if last_code_response:
+                write_text_file(CODE_PATH, strip_code_fence(last_code_response))
             raise PlannerError(str(last_validation_error))
 
+        if code_text is not None:
+            write_text_file(CODE_PATH, code_text)
         write_yaml_file(PLAN_PATH, plan)
 
         plan_entities = merge_plan_results_into_plan_entities(plan, problem_entities)

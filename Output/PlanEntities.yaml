@@ -1,53 +1,31 @@
-coffees_per_day:
-  value: 2
-  unit: coffees
+notebooks:
+  value: 30
+  unit: notebooks
   location: input
-  grand_unit: coffees
+  grand_unit: items
   expr: null
   formalized_expr: null
-  map: coffees_per_day
-  source: 2 coffees a day
-morning_coffee_price:
-  value: 3.0
-  unit: dollars
+  source: there are 30 notebooks on the shelf
+pens_more_than_notebooks:
+  value: 50
+  unit: pens
   location: input
-  grand_unit: dollars
+  grand_unit: items
   expr: null
   formalized_expr: null
-  map: morning_coffee_price
-  source: double espresso for $3.00 every morning
-afternoon_coffee_price:
-  value: 2.5
-  unit: dollars
-  location: input
-  grand_unit: dollars
-  expr: null
-  formalized_expr: null
-  map: afternoon_coffee_price
-  source: iced coffee for $2.50
-days:
-  value: 20
-  unit: days
-  location: input
-  grand_unit: null
-  expr: null
-  formalized_expr: null
-  map: days
-  source: 20 days
-total_cost:
+  source: 50 more pens than notebooks
+total_items:
   value: 110
-  unit: dollars
+  unit: items
   location: target
-  grand_unit: dollars
-  expr: intermediate_entity * days
-  formalized_expr: (morning_coffee_price + afternoon_coffee_price) * days
-  map: total_cost
-  source: How much money has she spent on coffee?
-intermediate_entity:
-  value: 5.5
-  unit: dollars
+  grand_unit: items
+  expr: notebooks + pens
+  formalized_expr: notebooks + (notebooks + pens_more_than_notebooks)
+  source: how many notebooks and pens, does he have altogether?
+pens:
+  value: 80
+  unit: pens
   location: step1
-  grand_unit: dollars
-  expr: morning_coffee_price + afternoon_coffee_price
-  formalized_expr: morning_coffee_price + afternoon_coffee_price
-  map: intermediate_entity
+  grand_unit: items
+  expr: notebooks + pens_more_than_notebooks
+  formalized_expr: notebooks + pens_more_than_notebooks

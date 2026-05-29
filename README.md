@@ -18,13 +18,16 @@ Pipeline formalize, solve, and verify lời giải bài toán dạng GSM8K. Dự
 Input/
   Problem.txt                 # Đề bài hiện tại
   StudentAnswer.txt           # Lời giải học sinh hiện tại
+  TeacherAnswer.txt           # Lời giải chuẩn giáo viên nếu dùng reference teacher
 
 Main/
   Solver.py                   # Chạy pipeline giải chuẩn
-  Main.py                     # Chạy pipeline đầy đủ gồm student + compare
+  Tutor.py                    # Tạo reference bằng solver hoặc lời giải giáo viên
+  Grader.py                   # Chấm lời giải học sinh so với reference
 
 Formalizer/
   ProblemFormalizer.py        # Đề bài -> ProblemEntities.yaml
+  TeacherAnswerFormalizer.py  # Lời giải giáo viên -> Plan.yaml + PlanEntities.yaml
   StudentAnswerFormalizer.py  # Bài làm học sinh -> StudentPlan.yaml + StudentAnswerEntities.yaml
   Mapper.py                   # Map entity student <-> plan
   Solver/
@@ -125,17 +128,29 @@ Input/StudentAnswer.txt
 Chạy:
 
 ```bash
-python3 Main/Main.py
+python3 Main/Grader.py --reference solver
 ```
 
 Pipeline đầy đủ:
 
 ```text
-Solver.py
+Tutor.py --reference solver
 StudentAnswerFormalizer.py
 InsideChecker.py --mode student
 Mapper.py
 CompareChecker.py
+```
+
+Nếu đã có sẵn `Output/Plan.yaml` và `Output/PlanEntities.yaml`, có thể chỉ chạy phần chấm:
+
+```bash
+python3 Main/Grader.py
+```
+
+Nếu muốn dùng lời giải giáo viên trong `Input/TeacherAnswer.txt` làm reference:
+
+```bash
+python3 Main/Grader.py --reference teacher
 ```
 
 Output quan trọng:

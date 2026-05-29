@@ -120,6 +120,22 @@ def read_yaml_file(path: Path, *, required: bool = True) -> Dict[str, Any]:
     return data
 
 
+def read_yaml_any(path: Path, *, required: bool = True) -> Any:
+    if not path.exists():
+        if required:
+            raise StudentAnswerFormalizerError(f"Không tìm thấy file: {path}")
+        return None
+
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return None
+
+    try:
+        return yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise StudentAnswerFormalizerError(f"File YAML không hợp lệ: {path} - {exc}") from exc
+
+
 def write_yaml_file(path: Path, data: Any) -> None:
     ensure_dirs()
     with path.open("w", encoding="utf-8") as f:
@@ -130,6 +146,74 @@ def write_yaml_file(path: Path, data: Any) -> None:
             sort_keys=False,
             default_flow_style=False,
         )
+
+
+def normalize_diagnosis_item(item: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(item, str):
+        label = item.strip()
+        step = None
+        entity = None
+    elif isinstance(item, dict):
+        label = str(item.get("diagnosis", "")).strip()
+        step = item.get("step")
+        entity = item.get("entity")
+    else:
+        return None
+
+    if not label:
+        return None
+
+    return {
+        "diagnosis": label,
+        "step": step if step not in {"", "null", "None"} else None,
+        "entity": entity if entity not in {"", "null", "None"} else None,
+    }
+
+
+def read_diagnosis_file() -> List[Dict[str, Any]]:
+    raw_data = read_yaml_any(DIAGNOSIS_PATH, required=False)
+    if isinstance(raw_data, dict):
+        raw_items = raw_data.get("diagnosis", [])
+    elif isinstance(raw_data, list):
+        raw_items = raw_data
+    else:
+        raw_items = []
+
+    items: List[Dict[str, Any]] = []
+    for item in raw_items:
+        normalized = normalize_diagnosis_item(item)
+        if normalized is not None:
+            items.append(normalized)
+    return items
+
+
+def merge_diagnosis_items(new_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    merged: List[Dict[str, Any]] = []
+    seen = set()
+
+    for item in read_diagnosis_file() + new_items:
+        normalized = normalize_diagnosis_item(item)
+        if normalized is None:
+            continue
+        key = (
+            normalized.get("diagnosis"),
+            normalized.get("step"),
+            normalized.get("entity"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(normalized)
+
+    has_real_error = any(item.get("diagnosis") != "all right" for item in merged)
+    if has_real_error:
+        merged = [item for item in merged if item.get("diagnosis") != "all right"]
+
+    return merged
+
+
+def append_diagnosis_file(diagnosis: List[Dict[str, Any]]) -> None:
+    write_yaml_file(DIAGNOSIS_PATH, merge_diagnosis_items(diagnosis))
 
 
 def write_log(status: str, message: str = "") -> None:
@@ -713,7 +797,7 @@ def normalize_diagnosis(raw_diagnosis: List[Dict[str, Any]]) -> List[Dict[str, A
 
 
 def write_diagnosis_and_wrong(diagnosis: List[Dict[str, Any]]) -> None:
-    write_yaml_file(DIAGNOSIS_PATH, diagnosis)
+    append_diagnosis_file(diagnosis)
 
     if diagnosis:
         WRONG_PATH.write_text("No\n", encoding="utf-8")

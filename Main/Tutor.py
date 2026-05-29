@@ -1,26 +1,25 @@
 """
-Main/Main.py
+Main/Tutor.py
 
-Pipeline đầy đủ.
+Pipeline tạo lời giải/reference.
 
-Luồng mặc định:
+Mode solver:
 1. Main/Solver.py
    - ProblemFormalizer
    - Planner
    - Executor
-2. Formalizer/StudentAnswerFormalizer.py
-3. Verifier/InsideChecker.py --mode student
-4. Formalizer/Mapper.py
-5. Verifier/CompareChecker.py
 
-Luồng giáo viên:
-python3 Main/Main.py --reference teacher
+Mode teacher:
 1. Formalizer/ProblemFormalizer.py
 2. Formalizer/TeacherAnswerFormalizer.py
-3. Formalizer/StudentAnswerFormalizer.py
-4. Verifier/InsideChecker.py --mode student
-5. Formalizer/Mapper.py
-6. Verifier/CompareChecker.py
+
+Output reference chính:
+- Output/ProblemEntities.yaml
+- Output/Plan.yaml
+- Output/PlanEntities.yaml
+- Output/Code.txt                  # nếu dùng solver/code planner
+- Output/TeacherPlan.yaml          # nếu dùng teacher
+- Output/TeacherAnswerEntities.yaml # nếu dùng teacher
 """
 
 from __future__ import annotations
@@ -34,6 +33,7 @@ from typing import List
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+OUTPUT_DIR = ROOT_DIR / "Output"
 
 
 @dataclass(frozen=True)
@@ -49,6 +49,7 @@ SOLVER_REFERENCE_STAGES = [
     ),
 ]
 
+
 TEACHER_REFERENCE_STAGES = [
     Stage(
         name="ProblemFormalizer",
@@ -60,28 +61,15 @@ TEACHER_REFERENCE_STAGES = [
     ),
 ]
 
-COMPARE_STAGES = [
-    Stage(
-        name="StudentAnswerFormalizer",
-        command=[sys.executable, str(ROOT_DIR / "Formalizer" / "StudentAnswerFormalizer.py")],
-    ),
-    Stage(
-        name="InsideCheckerStudent",
-        command=[
-            sys.executable,
-            str(ROOT_DIR / "Verifier" / "InsideChecker.py"),
-            "--mode",
-            "student",
-        ],
-    ),
-    Stage(
-        name="Mapper",
-        command=[sys.executable, str(ROOT_DIR / "Formalizer" / "Mapper.py")],
-    ),
-    Stage(
-        name="CompareChecker",
-        command=[sys.executable, str(ROOT_DIR / "Verifier" / "CompareChecker.py")],
-    ),
+
+REFERENCE_OUTPUTS = [
+    "ProblemEntities.yaml",
+    "Code.txt",
+    "Plan.yaml",
+    "PlanEntities.yaml",
+    "TeacherPlan.yaml",
+    "TeacherAnswerEntities.yaml",
+    "Error.yaml",
 ]
 
 
@@ -98,29 +86,45 @@ def run_stage(stage: Stage) -> None:
         raise SystemExit(completed.returncode)
 
 
+def clear_reference_outputs() -> None:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    for filename in REFERENCE_OUTPUTS:
+        path = OUTPUT_DIR / filename
+        if path.exists():
+            path.unlink()
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run solution comparison pipeline.")
+    parser = argparse.ArgumentParser(description="Build reference solution for a GSM8K problem.")
     parser.add_argument(
         "--reference",
         choices=["solver", "teacher"],
         default="solver",
         help="solver: tự giải làm chuẩn; teacher: dùng Input/TeacherAnswer.txt làm lời giải chuẩn.",
     )
+    parser.add_argument(
+        "--keep-existing",
+        action="store_true",
+        help="Không xoá các output reference cũ trước khi chạy.",
+    )
     return parser.parse_args()
 
 
 def stages_for_reference(reference: str) -> List[Stage]:
     if reference == "teacher":
-        return TEACHER_REFERENCE_STAGES + COMPARE_STAGES
-    return SOLVER_REFERENCE_STAGES + COMPARE_STAGES
+        return TEACHER_REFERENCE_STAGES
+    return SOLVER_REFERENCE_STAGES
 
 
 def run() -> None:
     args = parse_args()
+    if not args.keep_existing:
+        clear_reference_outputs()
+
     for stage in stages_for_reference(args.reference):
         run_stage(stage)
 
-    print("Pass Main")
+    print("Pass Tutor")
 
 
 if __name__ == "__main__":

@@ -22,7 +22,8 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT = ROOT / "Benchmark" / "GSM8K Benchmark.csv"
-DEFAULT_OUTPUT = ROOT / "Output" / "BenchmarkOuput" / "solver_pipeline_benchmark_results.csv"
+DEFAULT_ERROR_DIR = ROOT / "Error"
+DEFAULT_OUTPUT_NAME = "results.csv"
 
 PROBLEM_PATH = ROOT / "Input" / "Problem.txt"
 PLAN_ENTITIES_PATH = ROOT / "Output" / "PlanEntities.yaml"
@@ -95,6 +96,10 @@ def plan_path(root_dir: Path) -> Path:
     return root_dir / "Output" / "Plan.yaml"
 
 
+def code_path(root_dir: Path) -> Path:
+    return root_dir / "Output" / "Code.txt"
+
+
 def solver_path(root_dir: Path) -> Path:
     return root_dir / "Main" / "Solver.py"
 
@@ -103,6 +108,20 @@ def read_snapshot(path: Path) -> str:
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8").strip()
+
+
+def clear_solver_outputs(root_dir: Path) -> None:
+    output_dir = root_dir / "Output"
+    for path in [
+        problem_entities_path(root_dir),
+        code_path(root_dir),
+        plan_path(root_dir),
+        plan_entities_path(root_dir),
+        output_dir / "Error.yaml",
+        output_dir / "Log.yaml",
+    ]:
+        if path.exists():
+            path.unlink()
 
 
 def read_target_answer(root_dir: Path) -> tuple[str, str]:
@@ -234,6 +253,7 @@ def result_fieldnames() -> list[str]:
         "solver_stdout",
         "solver_stderr",
         "problem_entities_yaml",
+        "code_txt",
         "plan_yaml",
         "plan_entities_yaml",
         "error_stage",
@@ -269,6 +289,12 @@ def write_wrong_results(output_path: Path, rows: list[dict[str, Any]]) -> Path:
     ]
     write_results(wrong_path, wrong_rows)
     return wrong_path
+
+
+def remove_stale_csv_outputs(output_path: Path) -> None:
+    for path in [output_path, derived_output_path(output_path, "_wrong")]:
+        if path.exists():
+            path.unlink()
 
 
 def compute_summary(
@@ -354,10 +380,13 @@ def write_all_outputs(
     rows: list[dict[str, Any]],
     total_limit: int,
     input_path: Path,
-) -> tuple[Path, Path]:
+    write_csv: bool,
+) -> tuple[Optional[Path], Path]:
     rows.sort(key=lambda item: int(item["index"]))
-    write_results(output_path, rows)
-    wrong_path = write_wrong_results(output_path, rows)
+    wrong_path: Optional[Path] = None
+    if write_csv:
+        write_results(output_path, rows)
+        wrong_path = write_wrong_results(output_path, rows)
     summary_path = write_summary(
         output_path=output_path,
         rows=rows,
@@ -365,6 +394,320 @@ def write_all_outputs(
         input_path=input_path,
     )
     return wrong_path, summary_path
+
+
+def bad_result_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in rows
+        if row.get("error", "") or row.get("correct") != "yes"
+    ]
+
+
+def extract_reason(stderr: str, error: str) -> str:
+    text = stderr or error or ""
+    match = re.search(r"Reason:\s*(.+)", text, flags=re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text.strip()
+
+
+def target_entity_snapshot(row: dict[str, Any]) -> dict[str, Any]:
+    text = str(row.get("plan_entities_yaml") or "")
+    if not text.strip():
+        return {}
+    try:
+        entities = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return {}
+    if not isinstance(entities, dict):
+        return {}
+    target = str(row.get("target_entity") or "")
+    entity = entities.get(target)
+    return entity if isinstance(entity, dict) else {}
+
+
+def diagnose_result_row(row: dict[str, Any]) -> str:
+    index = row.get("index", "")
+    question = row.get("question", "")
+    official = row.get("official_answer", "")
+    pipeline = row.get("pipeline_answer", "")
+    target = row.get("target_entity", "")
+    stage = row.get("error_stage", "") or "không có"
+    error = row.get("error", "")
+    stderr = row.get("solver_stderr", "")
+    stdout = row.get("solver_stdout", "")
+
+    lines = [
+        f"ID: {index}",
+        f"Stage lỗi: {stage}",
+        f"Target entity: {target or 'không có'}",
+        f"Official answer: {official}",
+        f"Pipeline answer: {pipeline or 'không có'}",
+        "",
+        "Câu hỏi:",
+        str(question),
+        "",
+        "Chẩn đoán tự động:",
+    ]
+
+    if error:
+        reason = extract_reason(str(stderr), str(error))
+        if stage == "ProblemFormalizer":
+            lines.append(
+                "Không formalize được ProblemEntities. Thường là validator của "
+                "ProblemFormalizer quá cứng hoặc LLM sinh entity/value không khớp "
+                "ràng buộc hiện tại."
+            )
+        elif stage == "Planner":
+            lines.append(
+                "ProblemEntities đã có, nhưng Planner không tạo được Plan hợp lệ. "
+                "Khả năng là prompt/validator của Planner reject plan hoặc LLM dùng "
+                "entity chưa tồn tại."
+            )
+        elif stage == "Executor":
+            lines.append(
+                "Plan đã được sinh nhưng Executor/InsideChecker không execute hoặc "
+                "repair được. Kiểm tra Plan.yaml, Error.yaml trong output chạy gốc "
+                "nếu còn, và stderr bên dưới."
+            )
+        elif stage == "target_read":
+            lines.append(
+                "Solver pass nhưng không đọc được đúng target từ PlanEntities.yaml. "
+                "Có thể thiếu target, nhiều target, hoặc target.value còn null."
+            )
+        elif stage == "timeout":
+            lines.append("Solver vượt quá timeout cho case này.")
+        else:
+            lines.append("Pipeline lỗi ở stage chưa phân loại rõ.")
+        if reason:
+            lines.extend(["", "Reason:", reason])
+    else:
+        target_entity = target_entity_snapshot(row)
+        expr = target_entity.get("expr")
+        formalized_expr = target_entity.get("formalized_expr")
+        value = target_entity.get("value")
+        lines.append(
+            "Pipeline chạy pass nhưng target value không khớp official answer. "
+            "Khả năng cao là sai logic ở Planner/repair, sai target, hoặc entity "
+            "trung gian biểu diễn quan hệ chưa đúng."
+        )
+        lines.extend(
+            [
+                "",
+                f"Target value trong PlanEntities: {value!r}",
+                f"Target expr: {expr or 'không có'}",
+                f"Target formalized_expr: {formalized_expr or 'không có'}",
+            ]
+        )
+
+    lines.extend(
+        [
+            "",
+            "Thông tin pipeline:",
+            "stdout:",
+            str(stdout).strip() or "(trống)",
+            "",
+            "stderr:",
+            str(stderr).strip() or "(trống)",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_case_file(path: Path, content: Any, fallback: str = "# unavailable\n") -> None:
+    text = str(content or "").strip()
+    path.write_text((text + "\n") if text else fallback, encoding="utf-8")
+
+
+def dashboard_html(cases: list[dict[str, Any]], summary: dict[str, Any]) -> str:
+    data = {
+        "summary": summary,
+        "cases": cases,
+    }
+    data_json = (
+        json.dumps(data, ensure_ascii=False)
+        .replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+    )
+    return f"""<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Solver Error Dashboard</title>
+  <style>
+    body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f7f7f8; color: #1f2933; }}
+    header {{ padding: 20px 28px; background: #ffffff; border-bottom: 1px solid #d9dee5; position: sticky; top: 0; z-index: 2; }}
+    h1 {{ margin: 0 0 10px; font-size: 22px; }}
+    .stats {{ display: flex; flex-wrap: wrap; gap: 10px; }}
+    .stat {{ background: #eef2f7; border: 1px solid #d9dee5; padding: 8px 10px; border-radius: 6px; min-width: 110px; }}
+    .stat b {{ display: block; font-size: 18px; }}
+    main {{ display: grid; grid-template-columns: 320px 1fr; gap: 0; min-height: calc(100vh - 98px); }}
+    aside {{ border-right: 1px solid #d9dee5; background: #fff; overflow: auto; }}
+    .filters {{ padding: 12px; display: grid; gap: 8px; border-bottom: 1px solid #d9dee5; }}
+    input, select {{ width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #c7ced8; border-radius: 6px; background: #fff; }}
+    .case {{ padding: 12px; border-bottom: 1px solid #edf0f4; cursor: pointer; }}
+    .case:hover, .case.active {{ background: #edf5ff; }}
+    .case .id {{ font-weight: 700; }}
+    .case .meta {{ font-size: 12px; color: #64748b; margin-top: 3px; }}
+    .detail {{ padding: 18px 22px; overflow: auto; }}
+    .panel {{ background: #fff; border: 1px solid #d9dee5; border-radius: 8px; margin-bottom: 14px; }}
+    .panel h2 {{ font-size: 16px; margin: 0; padding: 12px 14px; border-bottom: 1px solid #edf0f4; }}
+    .panel .body {{ padding: 12px 14px; }}
+    pre {{ white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 13px; line-height: 1.45; }}
+    .tabs {{ display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px; border-bottom: 1px solid #edf0f4; }}
+    .tab {{ padding: 7px 10px; border: 1px solid #c7ced8; background: #fff; border-radius: 6px; cursor: pointer; }}
+    .tab.active {{ background: #1f6feb; color: #fff; border-color: #1f6feb; }}
+    .badge {{ display: inline-block; padding: 2px 6px; border-radius: 999px; background: #fee2e2; color: #991b1b; font-size: 12px; }}
+    @media (max-width: 850px) {{ main {{ grid-template-columns: 1fr; }} aside {{ max-height: 45vh; border-right: 0; border-bottom: 1px solid #d9dee5; }} }}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Solver Error Dashboard</h1>
+    <div class="stats" id="stats"></div>
+  </header>
+  <main>
+    <aside>
+      <div class="filters">
+        <input id="search" placeholder="Tìm theo id hoặc câu hỏi">
+        <select id="stage"><option value="">Tất cả stage</option></select>
+      </div>
+      <div id="list"></div>
+    </aside>
+    <section class="detail" id="detail"></section>
+  </main>
+  <script id="dashboard-data" type="application/json">{data_json}</script>
+  <script>
+    const data = JSON.parse(document.getElementById('dashboard-data').textContent);
+    const state = {{ selected: 0, tab: 'Codex.txt', query: '', stage: '' }};
+    const stats = data.summary || {{}};
+    const cases = data.cases || [];
+    const statsEl = document.getElementById('stats');
+    const listEl = document.getElementById('list');
+    const detailEl = document.getElementById('detail');
+    const searchEl = document.getElementById('search');
+    const stageEl = document.getElementById('stage');
+    function esc(s) {{ return String(s ?? '').replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c])); }}
+    function renderStats() {{
+      const items = [
+        ['Tổng', stats.total_limit],
+        ['Đã chạy', stats.completed_rows],
+        ['Sai', stats.wrong_rows],
+        ['Lỗi', stats.error_rows],
+        ['Đúng', stats.correct_rows],
+        ['Accuracy', (stats.accuracy_completed_percent ?? 0) + '%'],
+      ];
+      statsEl.innerHTML = items.map(([k,v]) => `<div class="stat"><b>${{esc(v)}}</b><span>${{esc(k)}}</span></div>`).join('');
+    }}
+    function filteredCases() {{
+      return cases.filter(c => {{
+        const q = state.query.toLowerCase();
+        const okQuery = !q || String(c.id).includes(q) || String(c.question).toLowerCase().includes(q);
+        const okStage = !state.stage || c.stage === state.stage;
+        return okQuery && okStage;
+      }});
+    }}
+    function renderList() {{
+      const items = filteredCases();
+      listEl.innerHTML = items.map((c, i) => `<div class="case ${{i === state.selected ? 'active' : ''}}" data-i="${{i}}">
+        <div><span class="id">#${{esc(c.id)}}</span> <span class="badge">${{esc(c.kind)}}</span></div>
+        <div class="meta">${{esc(c.stage)}} · expected ${{esc(c.official)}} · got ${{esc(c.pipeline || 'n/a')}}</div>
+        <div class="meta">${{esc(c.question).slice(0, 120)}}</div>
+      </div>`).join('') || '<div class="case">Không có case nào.</div>';
+      [...listEl.querySelectorAll('.case[data-i]')].forEach(el => el.onclick = () => {{ state.selected = Number(el.dataset.i); state.tab = 'Codex.txt'; render(); }});
+    }}
+    function renderDetail() {{
+      const items = filteredCases();
+      const c = items[state.selected];
+      if (!c) {{ detailEl.innerHTML = ''; return; }}
+      const files = c.files || {{}};
+      if (!files[state.tab]) state.tab = Object.keys(files)[0] || 'Codex.txt';
+      detailEl.innerHTML = `
+        <div class="panel"><h2>#${{esc(c.id)}} · ${{esc(c.kind)}}</h2><div class="body">
+          <p><b>Question:</b> ${{esc(c.question)}}</p>
+          <p><b>Official:</b> ${{esc(c.official)}} · <b>Pipeline:</b> ${{esc(c.pipeline || 'n/a')}} · <b>Stage:</b> ${{esc(c.stage)}}</p>
+        </div></div>
+        <div class="panel">
+          <div class="tabs">${{Object.keys(files).map(name => `<button class="tab ${{name === state.tab ? 'active' : ''}}" data-tab="${{esc(name)}}">${{esc(name)}}</button>`).join('')}}</div>
+          <div class="body"><pre>${{esc(files[state.tab] || '')}}</pre></div>
+        </div>`;
+      [...detailEl.querySelectorAll('.tab')].forEach(el => el.onclick = () => {{ state.tab = el.dataset.tab; renderDetail(); }});
+    }}
+    function renderStages() {{
+      const stages = [...new Set(cases.map(c => c.stage).filter(Boolean))];
+      stageEl.innerHTML = '<option value="">Tất cả stage</option>' + stages.map(s => `<option value="${{esc(s)}}">${{esc(s)}}</option>`).join('');
+    }}
+    function render() {{ renderStats(); renderList(); renderDetail(); }}
+    searchEl.oninput = () => {{ state.query = searchEl.value; state.selected = 0; render(); }};
+    stageEl.onchange = () => {{ state.stage = stageEl.value; state.selected = 0; render(); }};
+    renderStages();
+    render();
+  </script>
+</body>
+</html>
+"""
+
+
+def write_error_report(
+    *,
+    error_dir: Path,
+    rows: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> None:
+    error_dir.mkdir(parents=True, exist_ok=True)
+    for stale_case_dir in error_dir.iterdir():
+        if stale_case_dir.is_dir() and stale_case_dir.name.isdigit():
+            shutil.rmtree(stale_case_dir)
+
+    cases: list[dict[str, Any]] = []
+
+    for row in bad_result_rows(rows):
+        index = str(row.get("index"))
+        case_dir = error_dir / index
+        case_dir.mkdir(parents=True, exist_ok=True)
+
+        diagnosis = diagnose_result_row(row)
+        files = {
+            "ProblemEntities.yaml": str(row.get("problem_entities_yaml") or "").strip(),
+            "Code.txt": str(row.get("code_txt") or "").strip(),
+            "Plan.yaml": str(row.get("plan_yaml") or "").strip(),
+            "PlanEntities.yaml": str(row.get("plan_entities_yaml") or "").strip(),
+            "Codex.txt": diagnosis.strip(),
+        }
+
+        for name, content in files.items():
+            fallback = "(trống)\n" if name == "Codex.txt" else "# unavailable\n"
+            write_case_file(case_dir / name, content, fallback=fallback)
+
+        cases.append(
+            {
+                "id": index,
+                "kind": "Lỗi pipeline" if row.get("error") else "Sai kết quả",
+                "stage": row.get("error_stage") or "wrong",
+                "question": row.get("question", ""),
+                "official": row.get("official_answer", ""),
+                "pipeline": row.get("pipeline_answer", ""),
+                "files": files,
+            }
+        )
+
+    summary_lines = [
+        "# Error Summary",
+        "",
+        f"- Total: {summary.get('total_limit')}",
+        f"- Completed: {summary.get('completed_rows')}",
+        f"- Correct: {summary.get('correct_rows')}",
+        f"- Wrong: {summary.get('wrong_rows')}",
+        f"- Error: {summary.get('error_rows')}",
+        f"- Accuracy completed: {summary.get('accuracy_completed_percent')}%",
+        f"- Updated at: {summary.get('updated_at')}",
+        "",
+    ]
+    (error_dir / "Summary.md").write_text("\n".join(summary_lines), encoding="utf-8")
+    (error_dir / "index.html").write_text(dashboard_html(cases, summary), encoding="utf-8")
 
 
 def run_solver(root_dir: Path, timeout: int) -> subprocess.CompletedProcess[str]:
@@ -443,6 +786,7 @@ def run_one_row(
         "solver_stdout": "",
         "solver_stderr": "",
         "problem_entities_yaml": "",
+        "code_txt": "",
         "plan_yaml": "",
         "plan_entities_yaml": "",
         "error_stage": "",
@@ -461,11 +805,13 @@ def run_one_row(
         current_problem_path = problem_path(root_dir)
         current_problem_path.parent.mkdir(parents=True, exist_ok=True)
         current_problem_path.write_text(question + "\n", encoding="utf-8")
+        clear_solver_outputs(root_dir)
 
         completed = run_solver(root_dir, timeout)
         result_row["solver_stdout"] = completed.stdout.strip()
         result_row["solver_stderr"] = completed.stderr.strip()
         result_row["problem_entities_yaml"] = read_snapshot(problem_entities_path(root_dir))
+        result_row["code_txt"] = read_snapshot(code_path(root_dir))
         result_row["plan_yaml"] = read_snapshot(plan_path(root_dir))
         result_row["plan_entities_yaml"] = read_snapshot(plan_entities_path(root_dir))
 
@@ -533,7 +879,13 @@ def run_benchmark(args: argparse.Namespace) -> None:
     load_dotenv(ROOT / ".env")
 
     input_path = normalize_path(args.input)
-    output_path = normalize_path(args.output)
+    error_dir = normalize_path(args.error_dir)
+    output_path = normalize_path(args.output) if args.output else error_dir / DEFAULT_OUTPUT_NAME
+    if args.resume and not args.write_csv:
+        raise SystemExit("--resume cần --write-csv vì resume đọc lại các dòng đã chạy từ results.csv.")
+    if not args.write_csv and not args.output:
+        remove_stale_csv_outputs(output_path)
+
     rows, answer_column = read_benchmark_rows(input_path, args.limit)
     indexed_rows = [
         (zero_based_index + 1, row)
@@ -564,17 +916,18 @@ def run_benchmark(args: argparse.Namespace) -> None:
 
     original_problem = PROBLEM_PATH.read_text(encoding="utf-8") if PROBLEM_PATH.exists() else None
 
-    print(f"Input: {input_path}")
-    print(f"Output: {output_path}")
-    print(f"Answer column: {answer_column}")
-    print(f"Limit: {len(rows)}")
-    if selected_indices is not None:
-        print(f"Selected indices: {sorted(selected_indices)}")
-    print(f"Pending rows: {len(pending_rows)}")
-    print(f"Timeout per row: {args.timeout}s")
-    print(f"Workers: {args.workers}")
-    if args.workers > 1:
-        print("Parallel mode: each row runs in an isolated temporary workspace.")
+    if args.verbose:
+        print(f"Input: {input_path}")
+        print(f"CSV output: {output_path if args.write_csv else '(disabled)'}")
+        print(f"Answer column: {answer_column}")
+        print(f"Limit: {len(rows)}")
+        if selected_indices is not None:
+            print(f"Selected indices: {sorted(selected_indices)}")
+        print(f"Pending rows: {len(pending_rows)}")
+        print(f"Timeout per row: {args.timeout}s")
+        print(f"Workers: {args.workers}")
+        if args.workers > 1:
+            print("Parallel mode: each row runs in an isolated temporary workspace.")
 
     try:
         if args.workers <= 1:
@@ -587,6 +940,7 @@ def run_benchmark(args: argparse.Namespace) -> None:
                     timeout=args.timeout,
                     tolerance=Decimal(str(args.tolerance)),
                     isolated=False,
+                    emit_log=args.verbose,
                 )
                 results.append(result_row)
                 write_all_outputs(
@@ -594,12 +948,13 @@ def run_benchmark(args: argparse.Namespace) -> None:
                     rows=results,
                     total_limit=len(rows),
                     input_path=input_path,
+                    write_csv=args.write_csv,
                 )
 
                 if args.sleep > 0:
                     time.sleep(args.sleep)
         else:
-            if args.sleep > 0:
+            if args.sleep > 0 and args.verbose:
                 print("--sleep is ignored when --workers is greater than 1.")
 
             pending_indices = [index for index, _ in pending_rows]
@@ -633,7 +988,7 @@ def run_benchmark(args: argparse.Namespace) -> None:
                             break
 
                         message = completed_for_ordered_log[next_index].get("_progress_message")
-                        if message:
+                        if message and args.verbose:
                             print(message, flush=True)
                         next_log_position += 1
 
@@ -642,6 +997,7 @@ def run_benchmark(args: argparse.Namespace) -> None:
                         rows=results,
                         total_limit=len(rows),
                         input_path=input_path,
+                        write_csv=args.write_csv,
                     )
     finally:
         if args.workers <= 1 and args.restore_input and original_problem is not None:
@@ -654,6 +1010,7 @@ def run_benchmark(args: argparse.Namespace) -> None:
         rows=results,
         total_limit=len(rows),
         input_path=input_path,
+        write_csv=args.write_csv,
     )
     summary = compute_summary(
         rows=results,
@@ -662,17 +1019,26 @@ def run_benchmark(args: argparse.Namespace) -> None:
         output_path=output_path,
     )
 
-    print()
     print(f"Completed rows: {len(results)}")
     print(f"Attempted rows: {attempted}")
+    print(f"Correct: {correct_count}")
+    print(f"Wrong rows: {summary['wrong_rows']}")
     print(f"Error rows: {summary['error_rows']}")
     print(f"Formalizer errors: {summary['formalizer_error_rows']}")
     print(f"Errors by stage: {summary['error_stage_counts']}")
-    print(f"Correct: {correct_count}")
     print(f"Accuracy on attempted rows: {summary['accuracy_attempted']:.2%}")
     print(f"Accuracy on completed rows: {summary['accuracy_completed']:.2%}")
-    print(f"Wrong rows output: {wrong_path}")
-    print(f"Summary output: {summary_path}")
+    if args.verbose:
+        if args.write_csv:
+            print(f"Results output: {output_path}")
+            print(f"Wrong rows output: {wrong_path}")
+        print(f"Summary output: {summary_path}")
+
+    if args.write_error_report:
+        write_error_report(error_dir=error_dir, rows=results, summary=summary)
+        if args.verbose:
+            print(f"Error report output: {error_dir}")
+            print(f"Dashboard: {error_dir / 'index.html'}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -683,7 +1049,11 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--input", default=str(DEFAULT_INPUT), help="Benchmark CSV path.")
-    parser.add_argument("--output", default=str(DEFAULT_OUTPUT), help="Result CSV path.")
+    parser.add_argument(
+        "--output",
+        default="",
+        help="CSV path when --write-csv is enabled; also controls the summary filename. Default: <error-dir>/results.csv.",
+    )
     parser.add_argument("--limit", type=int, default=20, help="Number of rows to run.")
     parser.add_argument(
         "--indices",
@@ -710,7 +1080,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Reuse existing rows in the output CSV and continue from missing rows.",
+        help="Reuse existing rows in the output CSV and continue from missing rows. Requires --write-csv.",
     )
     parser.add_argument(
         "--no-restore-input",
@@ -718,7 +1088,29 @@ def parse_args() -> argparse.Namespace:
         action="store_false",
         help="Leave Input/Problem.txt as the last benchmark question.",
     )
+    parser.add_argument(
+        "--error-dir",
+        default=str(ROOT / "Error"),
+        help="Directory for per-case error artifacts and dashboard.",
+    )
+    parser.add_argument(
+        "--no-error-report",
+        dest="write_error_report",
+        action="store_false",
+        help="Do not write Error/{id}/ artifacts and index.html.",
+    )
+    parser.add_argument(
+        "--write-csv",
+        action="store_true",
+        help="Write results.csv and results_wrong.csv. Default is off.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print setup details, per-row logs, and artifact paths.",
+    )
     parser.set_defaults(restore_input=True)
+    parser.set_defaults(write_error_report=True)
     return parser.parse_args()
 
 
