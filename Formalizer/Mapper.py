@@ -2,10 +2,9 @@
 Formalizer/Mapper.py
 
 Nhiệm vụ:
-- Đọc:
-  - Output/PlanEntities.yaml
-  - Output/StudentAnswerEntities.yaml
-- Map các entity trong StudentAnswerEntities.yaml với PlanEntities.yaml.
+- Đọc StudentAnswerEntities.yaml và một file reference entity.
+- Reference mặc định là Output/PlanEntities.yaml.
+- Nếu chạy với --reference teacher, reference là Output/TeacherAnswerEntities.yaml.
 - Thêm trường map vào toàn bộ entity của cả 2 file.
 - Không dùng LLM.
 
@@ -22,7 +21,7 @@ Nhiệm vụ:
 4. Nếu không map được thì map để rỗng/null.
 
 Output:
-- Update Output/PlanEntities.yaml
+- Update file reference entity đang dùng
 - Update Output/StudentAnswerEntities.yaml
 - Ghi Pass Mapper / Fail Mapper vào Output/Log.yaml
 
@@ -33,6 +32,7 @@ Ghi chú:
 
 from __future__ import annotations
 
+import argparse
 import ast
 import re
 import sys
@@ -48,6 +48,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = ROOT_DIR / "Output"
 PLAN_ENTITIES_PATH = OUTPUT_DIR / "PlanEntities.yaml"
 STUDENT_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "StudentAnswerEntities.yaml"
+TEACHER_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "TeacherAnswerEntities.yaml"
 LOG_PATH = OUTPUT_DIR / "Log.yaml"
 
 
@@ -547,13 +548,39 @@ def apply_map_fields(
 # Main
 # -----------------------------------------------------------------------------
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Map student entities to a reference entity file.")
+    parser.add_argument(
+        "--reference",
+        choices=["plan", "teacher"],
+        default="plan",
+        help=(
+            "plan: map StudentAnswerEntities với PlanEntities; "
+            "teacher: map StudentAnswerEntities với TeacherAnswerEntities."
+        ),
+    )
+    return parser.parse_args()
+
+
+def reference_entities_path(reference: str) -> Path:
+    if reference == "teacher":
+        return TEACHER_ANSWER_ENTITIES_PATH
+    return PLAN_ENTITIES_PATH
+
+
 def run() -> None:
     try:
+        args = parse_args()
         ensure_dirs()
-        raw_plan_entities = read_yaml_file(PLAN_ENTITIES_PATH, required=True)
+        reference_path = reference_entities_path(args.reference)
+
+        raw_plan_entities = read_yaml_file(reference_path, required=True)
         raw_student_entities = read_yaml_file(STUDENT_ANSWER_ENTITIES_PATH, required=True)
 
-        plan_entities = normalize_entities(raw_plan_entities, file_label="Output/PlanEntities.yaml")
+        plan_entities = normalize_entities(
+            raw_plan_entities,
+            file_label=str(reference_path.relative_to(ROOT_DIR)),
+        )
         student_entities = normalize_entities(raw_student_entities, file_label="Output/StudentAnswerEntities.yaml")
 
         student_to_plan, plan_to_student = compute_mapping(plan_entities, student_entities)
@@ -564,7 +591,7 @@ def run() -> None:
             plan_to_student,
         )
 
-        write_yaml_file(PLAN_ENTITIES_PATH, updated_plan)
+        write_yaml_file(reference_path, updated_plan)
         write_yaml_file(STUDENT_ANSWER_ENTITIES_PATH, updated_student)
 
         write_log("Pass Mapper")

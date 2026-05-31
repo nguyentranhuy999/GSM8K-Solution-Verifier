@@ -300,7 +300,16 @@
             <span class="arrow">-></span>
             <div class="node green">TeacherAnswerFormalizer</div>
             <span class="arrow">-></span>
-            <div class="node amber">Reference<br><code>Plan.yaml</code></div>
+            <div class="node amber">Teacher Reference<br><code>TeacherPlan.yaml</code></div>
+          </div>
+
+          <h3>Tutor Self-Grade</h3>
+          <div class="flow">
+            <div class="node green">Solver</div>
+            <span class="arrow">-></span>
+            <div class="node green">StudentAnswerFormalizer</div>
+            <span class="arrow">-></span>
+            <div class="node amber">Mapper + CompareChecker<br><code>PlanEntities.yaml</code></div>
           </div>
 
           <h3>Grading</h3>
@@ -338,7 +347,7 @@
           <div class="change"><b>Entity có helper constants.</b><br><code>unit_conversion_*</code>, <code>identity_multiplier</code>, <code>percentage_scale</code>, <code>host_count</code>, <code>split_count</code> được thêm bằng code để giữ expr không có số literal.</div>
           <div class="change"><b>Validator dày hơn.</b><br>Các formalizer không chỉ tin output LLM; chúng reject YAML sai schema, số không grounded, step thiếu, target sai, numeric literal trong expr.</div>
           <div class="change"><b>Diagnosis được merge.</b><br><code>Diagnosis.yaml</code> không bị stage sau ghi đè; <code>Wrong.yaml</code> không bị hạ từ Yes về No nếu đã phát hiện lỗi.</div>
-          <div class="change"><b>Main được tách.</b><br><code>Main/Tutor.py</code> tạo reference, <code>Main/Grader.py</code> chấm student answer. Full pipeline cũ chuyển thành <code>Grader.py --reference solver</code>.</div>
+          <div class="change"><b>Main được tách.</b><br><code>Main/Tutor.py</code> tự giải rồi tự chấm, còn <code>Main/Grader.py</code> chấm teacher-vs-student bằng pipeline riêng.</div>
           <div class="change"><b>Benchmark và dashboard.</b><br>Các benchmark runner, folder lỗi theo id và dashboard HTML là phần thêm sau Prompt.pdf để debug nhiều case.</div>
         </div>
       </section>
@@ -369,14 +378,14 @@
       {
         path: 'Main/Tutor.py',
         group: 'Main',
-        role: 'Tạo reference bằng solver hoặc bằng lời giải giáo viên.',
-        details: ['--reference solver gọi Main/Solver.py.', '--reference teacher gọi ProblemFormalizer + TeacherAnswerFormalizer.']
+        role: 'Tự giải bằng solver rồi chấm lời giải học sinh.',
+        details: ['Gọi Main/Solver.py trước.', 'Sau đó chạy StudentAnswerFormalizer, Mapper và CompareChecker theo PlanEntities.']
       },
       {
         path: 'Main/Grader.py',
         group: 'Main',
-        role: 'Chấm lời giải học sinh dựa trên reference có sẵn hoặc tự gọi Tutor.',
-        details: ['Mặc định dùng Output/Plan.yaml hiện có.', 'Có thể chạy full pipeline với --reference solver/teacher.']
+        role: 'Chấm lời giải học sinh bằng lời giải giáo viên.',
+        details: ['Chạy ProblemFormalizer, StudentAnswerFormalizer, TeacherAnswerFormalizer.', 'Map/compare bằng --reference teacher, không dùng PlanEntities của solver.']
       },
       {
         path: 'Formalizer/ProblemFormalizer.py',
@@ -406,7 +415,7 @@
         path: 'Formalizer/TeacherAnswerFormalizer.py',
         group: 'Formalizer',
         role: 'Formalize lời giải giáo viên thành reference plan.',
-        details: ['Ghi TeacherPlan/TeacherAnswerEntities để debug.', 'Đồng thời ghi Plan/PlanEntities để checker dùng contract cũ.']
+        details: ['Chỉ ghi TeacherPlan/TeacherAnswerEntities.', 'Grader.py dùng trực tiếp các file Teacher* khi chấm theo lời giải giáo viên.']
       },
       {
         path: 'Formalizer/Mapper.py',
@@ -441,7 +450,7 @@
       {
         path: 'Benchmark/RunVerifyBenchmark.py',
         group: 'Benchmark',
-        role: 'Chạy Main/Grader.py --reference teacher trên benchmark verify.',
+        role: 'Chạy Main/Grader.py trên benchmark verify.',
         details: ['So Diagnosis/Wrong với cột type/wrong.', 'Lưu folder lỗi theo id và dashboard.']
       },
       {
@@ -496,4 +505,3 @@
   </script>
 </body>
 </html>
-

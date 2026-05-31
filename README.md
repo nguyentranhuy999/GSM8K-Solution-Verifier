@@ -22,12 +22,12 @@ Input/
 
 Main/
   Solver.py                   # Chạy pipeline giải chuẩn
-  Tutor.py                    # Tạo reference bằng solver hoặc lời giải giáo viên
-  Grader.py                   # Chấm lời giải học sinh so với reference
+  Tutor.py                    # Tự giải bằng solver rồi chấm lời giải học sinh
+  Grader.py                   # Chấm lời giải học sinh bằng lời giải giáo viên có sẵn
 
 Formalizer/
   ProblemFormalizer.py        # Đề bài -> ProblemEntities.yaml
-  TeacherAnswerFormalizer.py  # Lời giải giáo viên -> Plan.yaml + PlanEntities.yaml
+  TeacherAnswerFormalizer.py  # Lời giải giáo viên -> TeacherPlan.yaml + TeacherAnswerEntities.yaml
   StudentAnswerFormalizer.py  # Bài làm học sinh -> StudentPlan.yaml + StudentAnswerEntities.yaml
   Mapper.py                   # Map entity student <-> plan
   Solver/
@@ -110,7 +110,7 @@ location: target
 
 trong `Output/PlanEntities.yaml`.
 
-## Chạy Pipeline Đầy Đủ
+## Chạy Tutor Pipeline
 
 Ghi đề bài vào:
 
@@ -127,33 +127,62 @@ Input/StudentAnswer.txt
 Chạy:
 
 ```bash
-python3 Main/Grader.py --reference solver
+python3 Main/Tutor.py
 ```
 
-Pipeline đầy đủ:
+Tutor tự giải rồi tự chấm:
 
 ```text
-Tutor.py --reference solver
+Solver.py
 StudentAnswerFormalizer.py
 InsideChecker.py --mode student
 Mapper.py
 CompareChecker.py
 ```
 
-Nếu đã có sẵn `Output/Plan.yaml` và `Output/PlanEntities.yaml`, có thể chỉ chạy phần chấm:
+Output quan trọng:
+
+- `Output/Plan.yaml`: lời giải solver tự lập.
+- `Output/PlanEntities.yaml`: entity của lời giải solver sau execute.
+- `Output/StudentPlan.yaml`: các bước học sinh làm.
+- `Output/StudentAnswerEntities.yaml`: entity từ lời giải học sinh.
+- `Output/Diagnosis.yaml`: nhãn lỗi/kết quả so sánh.
+- `Output/Wrong.yaml`: `Yes` hoặc `No`.
+
+## Chạy Grader Pipeline
+
+Ghi đề bài, lời giải học sinh và lời giải giáo viên có sẵn vào:
+
+```text
+Input/Problem.txt
+Input/StudentAnswer.txt
+Input/TeacherAnswer.txt
+```
+
+Chạy:
 
 ```bash
 python3 Main/Grader.py
 ```
 
-Nếu muốn dùng lời giải giáo viên trong `Input/TeacherAnswer.txt` làm reference:
+Grader chấm dựa trên lời giải giáo viên:
 
-```bash
-python3 Main/Grader.py --reference teacher
+```text
+ProblemFormalizer.py
+StudentAnswerFormalizer.py
+TeacherAnswerFormalizer.py
+InsideChecker.py --mode student
+Mapper.py --reference teacher
+CompareChecker.py --reference teacher
 ```
+
+`Grader.py` là luồng teacher-vs-student riêng. Nó không gọi `Tutor.py` và không
+dùng `Plan.yaml`/`PlanEntities.yaml` làm reference để chấm.
 
 Output quan trọng:
 
+- `Output/TeacherPlan.yaml`: các bước giáo viên làm.
+- `Output/TeacherAnswerEntities.yaml`: entity từ lời giải giáo viên.
 - `Output/StudentPlan.yaml`: các bước học sinh làm.
 - `Output/StudentAnswerEntities.yaml`: entity từ lời giải học sinh.
 - `Output/Diagnosis.yaml`: nhãn lỗi/kết quả so sánh.

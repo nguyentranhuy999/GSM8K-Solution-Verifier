@@ -66,50 +66,52 @@ command duy nhất.
 
 ### Vai Trò
 
-`Main/Tutor.py` là entrypoint tạo reference. Reference có thể đến từ hai nguồn:
-
-- `solver`: hệ thống tự giải bằng `Main/Solver.py`.
-- `teacher`: dùng lời giải giáo viên trong `Input/TeacherAnswer.txt`.
+`Main/Tutor.py` là entrypoint tutor tự giải và tự chấm lời giải học sinh.
+Nó dùng solver làm lời giải chuẩn, sau đó so sánh bài học sinh với lời giải do
+hệ thống tự sinh.
 
 Command:
 
 ```bash
-python3 Main/Tutor.py --reference solver
-python3 Main/Tutor.py --reference teacher
+python3 Main/Tutor.py
 ```
 
-### Output Reference
+### Pipeline
 
-Mode `solver` tạo:
+```text
+Solver
+StudentAnswerFormalizer
+InsideChecker --mode student
+Mapper
+CompareChecker
+```
+
+### Output
 
 - `Output/ProblemEntities.yaml`
 - `Output/Code.txt`
 - `Output/Plan.yaml`
 - `Output/PlanEntities.yaml`
+- `Output/StudentPlan.yaml`
+- `Output/StudentAnswerEntities.yaml`
+- `Output/Diagnosis.yaml`
+- `Output/Wrong.yaml`
 - `Output/Error.yaml`
-
-Mode `teacher` tạo:
-
-- `Output/ProblemEntities.yaml`
-- `Output/TeacherPlan.yaml`
-- `Output/TeacherAnswerEntities.yaml`
-- `Output/Plan.yaml`
-- `Output/PlanEntities.yaml`
-
-Trong mode teacher, `TeacherAnswerFormalizer.py` ghi cả file debug riêng
-`TeacherPlan.yaml`/`TeacherAnswerEntities.yaml`, đồng thời ghi đè reference
-chuẩn vào `Plan.yaml`/`PlanEntities.yaml` để các checker phía sau dùng chung
-contract cũ.
 
 ### Cách Hoạt Động
 
-`Tutor.py` có hai danh sách stage:
+`Tutor.py` gọi `Main/Solver.py` trước. `Solver.py` tự chạy
+`ProblemFormalizer -> Planner -> Executor`, tạo `Plan.yaml` và
+`PlanEntities.yaml`.
 
-- `SOLVER_REFERENCE_STAGES`: gọi `Main/Solver.py`.
-- `TEACHER_REFERENCE_STAGES`: gọi `ProblemFormalizer.py` rồi
-  `TeacherAnswerFormalizer.py`.
+Sau đó `Tutor.py` chạy nhánh student:
 
-Trước khi chạy, `clear_reference_outputs()` xoá các file reference cũ:
+- `StudentAnswerFormalizer.py`: formalize bài học sinh.
+- `InsideChecker.py --mode student`: kiểm tra lỗi nội tại trong lời giải học sinh.
+- `Mapper.py`: map `StudentAnswerEntities.yaml` với `PlanEntities.yaml`.
+- `CompareChecker.py`: so sánh lời giải solver với lời giải học sinh.
+
+Trước khi chạy, `clear_tutor_outputs()` xoá các file output cũ:
 
 - `ProblemEntities.yaml`
 - `Code.txt`
@@ -117,72 +119,78 @@ Trước khi chạy, `clear_reference_outputs()` xoá các file reference cũ:
 - `PlanEntities.yaml`
 - `TeacherPlan.yaml`
 - `TeacherAnswerEntities.yaml`
+- `StudentPlan.yaml`
+- `StudentAnswerEntities.yaml`
+- `Diagnosis.yaml`
+- `Wrong.yaml`
 - `Error.yaml`
+- `LLMChecker.yaml`
 
 Có thể dùng `--keep-existing` để không xoá các output này trước khi chạy.
 
 ### Tại Sao Thiết Kế Như Vậy
 
-Sau khi dự án có hai nguồn reference, nếu tiếp tục nhét cả vào `Main.py` thì
-pipeline khó đọc. `Tutor.py` tách riêng phần "tạo lời giải chuẩn" khỏi phần
-"chấm lời giải học sinh".
+`Tutor.py` đại diện cho luồng hệ thống tự làm tutor: tự giải bài toán và dùng
+lời giải đó để chấm bài học sinh. Luồng này hữu ích khi không có lời giải giáo
+viên hoặc khi muốn đo toàn bộ backbone solve-and-verify.
 
-Nó cũng làm rõ boundary:
+Boundary hiện tại:
 
-- `Tutor.py` chỉ tạo reference.
-- `Grader.py` chỉ chấm student answer dựa trên reference.
+- `Solver.py`: chỉ giải bài toán.
+- `Tutor.py`: tự giải rồi tự chấm.
+- `Grader.py`: chấm dựa trên lời giải giáo viên có sẵn.
 
 ### Khác Biệt So Với `Prompt.pdf`
 
-`Prompt.pdf` không có `Tutor.py`. File này được thêm sau khi hệ thống cần hai
-luồng reference:
-
-- tự giải bằng solver;
-- dùng lời giải chuẩn của giáo viên.
+`Prompt.pdf` không có `Tutor.py`. File này được thêm để gom luồng
+`Solver -> StudentAnswerFormalizer -> Mapper -> CompareChecker` thành một lệnh
+khi muốn hệ thống tự giải và tự chấm.
 
 ## `Main/Grader.py`
 
 ### Vai Trò
 
-`Main/Grader.py` là entrypoint chấm lời giải học sinh. Nó dùng reference đã có
-trong:
+`Main/Grader.py` là entrypoint chấm lời giải học sinh bằng lời giải giáo viên.
+Nó là pipeline riêng với `Tutor.py`/`Solver.py`, không dùng reference solver
+trong `Output/Plan.yaml` và `Output/PlanEntities.yaml` để chấm.
 
-- `Output/ProblemEntities.yaml`
-- `Output/Plan.yaml`
-- `Output/PlanEntities.yaml`
-
-Sau đó chạy nhánh student:
+Pipeline hiện tại:
 
 ```text
+ProblemFormalizer
 StudentAnswerFormalizer
+TeacherAnswerFormalizer
 InsideChecker --mode student
-Mapper
-CompareChecker
+Mapper --reference teacher
+CompareChecker --reference teacher
 ```
 
-Command mặc định:
+Command chạy:
 
 ```bash
 python3 Main/Grader.py
 ```
 
-Command chạy full pipeline một lệnh:
-
-```bash
-python3 Main/Grader.py --reference solver
-python3 Main/Grader.py --reference teacher
-```
-
 ### Cách Hoạt Động
 
-`Grader.py` có ba mode reference:
+`Grader.py` chạy hai nhánh formalize song song về mặt contract:
 
-- `existing`: không tạo reference mới, chỉ kiểm tra các file reference đã tồn tại.
-- `solver`: gọi `Main/Tutor.py --reference solver` trước khi chấm.
-- `teacher`: gọi `Main/Tutor.py --reference teacher` trước khi chấm.
+- `ProblemFormalizer.py` tạo `ProblemEntities.yaml`, rồi copy entity gốc sang
+  `StudentAnswerEntities.yaml` và `TeacherAnswerEntities.yaml`.
+- `StudentAnswerFormalizer.py` đọc bài học sinh, tạo `StudentPlan.yaml` và thêm
+  entity trung gian vào `StudentAnswerEntities.yaml`.
+- `TeacherAnswerFormalizer.py` đọc lời giải giáo viên, tạo `TeacherPlan.yaml`
+  và thêm entity trung gian vào `TeacherAnswerEntities.yaml`.
+- `Mapper.py --reference teacher` map entity student với entity teacher.
+- `CompareChecker.py --reference teacher` so sánh hai plan/entity sau map.
 
-Trước khi chấm, `clear_grading_outputs()` xoá các file output cũ của grading:
+Trước khi chấm, `clear_grader_outputs()` xoá các file output cũ:
 
+- `ProblemEntities.yaml`
+- `Plan.yaml`
+- `PlanEntities.yaml`
+- `TeacherPlan.yaml`
+- `TeacherAnswerEntities.yaml`
 - `StudentPlan.yaml`
 - `StudentAnswerEntities.yaml`
 - `Diagnosis.yaml`
@@ -192,54 +200,37 @@ Trước khi chấm, `clear_grading_outputs()` xoá các file output cũ của g
 
 Với `--keep-existing`, `Grader.py` không xoá các file này.
 
-Nếu chạy mode `existing`, `ensure_reference_exists()` bắt buộc phải có:
-
-- `Output/ProblemEntities.yaml`
-- `Output/Plan.yaml`
-- `Output/PlanEntities.yaml`
-
-Nếu thiếu, chương trình dừng và gợi ý chạy `Tutor.py` hoặc `Grader.py --reference`.
-
 ### Tại Sao Thiết Kế Như Vậy
 
-Tách `Grader.py` giúp chạy lại nhiều bài học sinh trên cùng một reference mà
-không phải gọi lại solver. Điều này tiết kiệm token và giúp debug:
+Tách `Grader.py` theo teacher-vs-student giúp debug rõ hơn:
 
-1. Chạy `Tutor.py` để tạo reference một lần.
-2. Sửa `Input/StudentAnswer.txt`.
-3. Chạy `Grader.py` nhiều lần để kiểm tra formalizer/checker student.
+- `Tutor.py` tự giải và tự chấm theo lời giải solver.
+- `Grader.py` chỉ chấm bài bằng hai lời giải đã cho trong input.
+- `Plan.yaml`/`PlanEntities.yaml` không còn là contract bắt buộc của grader,
+  nên lỗi từ solver không lẫn vào benchmark verifier.
 
 ### Khác Biệt So Với `Prompt.pdf`
 
 `Prompt.pdf` chưa có `Main/Grader.py`. Trước đó dự án từng dùng `Main/Main.py`
-cho full pipeline. Hiện tại full pipeline được thay bằng:
-
-```bash
-python3 Main/Grader.py --reference solver
-```
-
-hoặc:
-
-```bash
-python3 Main/Grader.py --reference teacher
-```
+cho full pipeline. Hiện tại grader được tách thành luồng riêng:
+`ProblemFormalizer -> StudentAnswerFormalizer -> TeacherAnswerFormalizer ->
+Mapper teacher -> CompareChecker teacher`.
 
 ## Quan Hệ Giữa Ba File
 
 ```text
 Main/Solver.py
-  chỉ tạo reference bằng solver
+  chỉ giải bài toán bằng solver
 
 Main/Tutor.py
-  tạo reference bằng solver hoặc teacher
+  tự giải bằng solver rồi chấm student answer
 
 Main/Grader.py
-  chấm student answer, có thể gọi Tutor trước nếu cần
+  chấm student answer trực tiếp với teacher answer có sẵn
 ```
 
 Thiết kế hiện tại giữ nguyên nguyên tắc "mỗi file làm một phần":
 
 - `Solver.py`: solver engine entrypoint.
-- `Tutor.py`: reference builder.
+- `Tutor.py`: self-solve grading entrypoint.
 - `Grader.py`: grading entrypoint.
-

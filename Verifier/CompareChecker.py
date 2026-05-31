@@ -2,10 +2,14 @@
 Verify/CompareChecker.py
 
 Nhiệm vụ:
-- So sánh lời giải chuẩn/LLM với lời giải học sinh sau khi đã formalize, execute và map.
-- Đọc:
+- So sánh lời giải reference với lời giải học sinh sau khi đã formalize, execute và map.
+- Reference mặc định là Solver/Plan:
   - Output/Plan.yaml
   - Output/PlanEntities.yaml
+- Nếu chạy với --reference teacher, reference là:
+  - Output/TeacherPlan.yaml
+  - Output/TeacherAnswerEntities.yaml
+- Luôn đọc:
   - Output/StudentPlan.yaml
   - Output/StudentAnswerEntities.yaml
 - Ghi output vào:
@@ -55,6 +59,8 @@ OUTPUT_DIR = ROOT_DIR / "Output"
 
 PLAN_PATH = OUTPUT_DIR / "Plan.yaml"
 PLAN_ENTITIES_PATH = OUTPUT_DIR / "PlanEntities.yaml"
+TEACHER_PLAN_PATH = OUTPUT_DIR / "TeacherPlan.yaml"
+TEACHER_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "TeacherAnswerEntities.yaml"
 STUDENT_PLAN_PATH = OUTPUT_DIR / "StudentPlan.yaml"
 STUDENT_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "StudentAnswerEntities.yaml"
 
@@ -660,12 +666,34 @@ def update_wrong_file(diagnosis: List[Dict[str, Any]]) -> None:
 # Main
 # -----------------------------------------------------------------------------
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Compare a student plan against a reference plan.")
+    parser.add_argument(
+        "--reference",
+        choices=["plan", "teacher"],
+        default="plan",
+        help=(
+            "plan: so sánh với Plan.yaml/PlanEntities.yaml; "
+            "teacher: so sánh với TeacherPlan.yaml/TeacherAnswerEntities.yaml."
+        ),
+    )
+    return parser.parse_args()
+
+
+def reference_paths(reference: str) -> Tuple[Path, Path]:
+    if reference == "teacher":
+        return TEACHER_PLAN_PATH, TEACHER_ANSWER_ENTITIES_PATH
+    return PLAN_PATH, PLAN_ENTITIES_PATH
+
+
 def run() -> None:
     try:
+        args = parse_args()
         ensure_dirs()
+        reference_plan_path, reference_entities_path = reference_paths(args.reference)
 
-        plan = normalize_plan(read_yaml_file(PLAN_PATH, required=True))
-        plan_entities = normalize_entities(read_yaml_file(PLAN_ENTITIES_PATH, required=True))
+        plan = normalize_plan(read_yaml_file(reference_plan_path, required=True))
+        plan_entities = normalize_entities(read_yaml_file(reference_entities_path, required=True))
         student_plan = normalize_plan(read_yaml_file(STUDENT_PLAN_PATH, required=True))
         student_entities = normalize_entities(read_yaml_file(STUDENT_ANSWER_ENTITIES_PATH, required=True))
 

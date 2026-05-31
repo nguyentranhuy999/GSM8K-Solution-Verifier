@@ -141,12 +141,14 @@ Các file pipeline này không có trong prompt PDF ban đầu dưới dạng fi
 - `Main/Solver.py` chạy pipeline lời giải chuẩn:
   `ProblemFormalizer -> Planner -> Executor`.
 - `Main/Solver.py` không gọi InsideChecker riêng vì Executor đã gọi và repair.
-- `Main/Tutor.py` tạo reference bằng một trong hai luồng:
-  `solver` hoặc `teacher`.
-- `Main/Grader.py` chấm lời giải học sinh dựa trên reference có sẵn, hoặc tự gọi
-  `Tutor.py` trước với `--reference solver` / `--reference teacher`.
-- Full pipeline hiện tại chạy bằng:
-  `python3 Main/Grader.py --reference solver`.
+- `Main/Tutor.py` chạy pipeline tự giải và tự chấm:
+  `Solver -> StudentAnswerFormalizer -> InsideChecker student -> Mapper ->
+  CompareChecker`.
+- `Main/Grader.py` là pipeline teacher-vs-student riêng:
+  `ProblemFormalizer -> StudentAnswerFormalizer -> TeacherAnswerFormalizer ->
+  Mapper --reference teacher -> CompareChecker --reference teacher`.
+- Full pipeline chấm bằng lời giải giáo viên hiện tại chạy bằng:
+  `python3 Main/Grader.py`.
 
 ## `Benchmark/RunSolveBenchmark.py`
 

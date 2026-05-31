@@ -16,8 +16,8 @@ hiện tại, không chỉ theo thiết kế ban đầu trong `Docs/Prompt.pdf`.
 | File | Nhóm | Vai trò ngắn |
 |---|---|---|
 | `Main/Solver.py` | Main | Chạy solver reference: ProblemFormalizer -> Planner -> Executor. |
-| `Main/Tutor.py` | Main | Tạo reference bằng solver hoặc bằng lời giải giáo viên. |
-| `Main/Grader.py` | Main | Chấm lời giải học sinh dựa trên reference đã có hoặc tự gọi Tutor. |
+| `Main/Tutor.py` | Main | Tự giải bằng solver rồi chấm lời giải học sinh. |
+| `Main/Grader.py` | Main | Chấm lời giải học sinh bằng lời giải giáo viên có sẵn. |
 | `Formalizer/ProblemFormalizer.py` | Formalizer | Trích entity số trực tiếp trong đề bài. |
 | `Formalizer/Solver/Planner.py` | Formalizer | Sinh pseudo-code, map số sang entity, tạo `Plan.yaml`. |
 | `Formalizer/Solver/Executor.py` | Formalizer | Thực thi plan, tính value, formalized expr, gọi InsideChecker và repair. |
@@ -53,4 +53,3 @@ Code hiện tại đã mở rộng theo hướng hybrid:
   `identity_multiplier`, `percentage_scale`, `host_count`, `split_count`.
   Những helper này được thêm bằng code để giữ `expr` chỉ dùng biến, không dùng
   số literal.
-

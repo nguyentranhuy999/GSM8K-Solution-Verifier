@@ -44,14 +44,13 @@ Output chính:
 LLM nếu InsideChecker báo lỗi, nên `Main/Solver.py` không gọi InsideChecker thêm
 lần nữa.
 
-### Grader pipeline
+### Tutor pipeline
 
-`Main/Grader.py` chạy pipeline chấm lời giải học sinh. Nếu dùng
-`--reference solver` hoặc `--reference teacher`, nó gọi `Main/Tutor.py` trước để
-tạo reference.
+`Main/Tutor.py` chạy luồng tự giải và tự chấm: hệ thống tự tạo lời giải chuẩn
+bằng solver, sau đó chấm lời giải học sinh theo lời giải đó.
 
 ```text
-Tutor --reference solver/teacher
+Solver
 StudentAnswerFormalizer
 InsideChecker --mode student
 Mapper
@@ -60,6 +59,32 @@ CompareChecker
 
 Output chính:
 
+- `Output/Plan.yaml`
+- `Output/PlanEntities.yaml`
+- `Output/StudentPlan.yaml`
+- `Output/StudentAnswerEntities.yaml`
+- `Output/Diagnosis.yaml`
+- `Output/Wrong.yaml`
+
+### Grader pipeline
+
+`Main/Grader.py` chạy pipeline chấm lời giải học sinh bằng lời giải giáo viên.
+Đây là luồng riêng với `Tutor.py`/`Solver.py`, không dùng solver reference để
+chấm.
+
+```text
+ProblemFormalizer
+StudentAnswerFormalizer
+TeacherAnswerFormalizer
+InsideChecker --mode student
+Mapper --reference teacher
+CompareChecker --reference teacher
+```
+
+Output chính:
+
+- `Output/TeacherPlan.yaml`
+- `Output/TeacherAnswerEntities.yaml`
 - `Output/StudentPlan.yaml`
 - `Output/StudentAnswerEntities.yaml`
 - `Output/Diagnosis.yaml`
@@ -276,12 +301,13 @@ Mở rộng hiện tại và mục đích:
 - `Main/Solver.py` không gọi InsideChecker riêng vì `Executor.py` đã tự gọi
   InsideChecker và repair. Mục đích là tránh check trùng và tránh repair hai
   lần trên cùng một plan.
-- `Main/Tutor.py` tạo reference bằng solver hoặc lời giải giáo viên. Mục đích là
-  tách riêng phần tạo lời giải chuẩn khỏi phần chấm.
-- `Main/Grader.py` chạy phần chấm:
-  `StudentAnswerFormalizer -> InsideChecker student -> Mapper -> CompareChecker`.
-  Mục đích là có thể chấm lại nhiều bài học sinh trên cùng một reference mà
-  không gọi solver lại.
+- `Main/Tutor.py` chạy luồng tự giải và tự chấm:
+  `Solver -> StudentAnswerFormalizer -> Mapper -> CompareChecker`. Mục đích là
+  kiểm tra bài học sinh bằng lời giải do hệ thống tự sinh.
+- `Main/Grader.py` chạy phần chấm teacher-vs-student:
+  `ProblemFormalizer -> StudentAnswerFormalizer -> TeacherAnswerFormalizer ->
+  Mapper teacher -> CompareChecker teacher`. Mục đích là benchmark verifier dựa
+  trên lời giải giáo viên, không bị lẫn lỗi từ solver.
 - Các stage được chạy bằng subprocess theo thứ tự. Mục đích là mỗi module vẫn có
   thể chạy độc lập, nhưng khi cần thì có pipeline tổng hợp.
 

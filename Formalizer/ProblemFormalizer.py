@@ -11,6 +11,7 @@ Nhiệm vụ:
 - Nếu thành công, copy Output/ProblemEntities.yaml sang:
   - Output/PlanEntities.yaml
   - Output/StudentAnswerEntities.yaml
+  - Output/TeacherAnswerEntities.yaml
 
 Yêu cầu .env:
 OPENROUTER_API_KEY=...
@@ -20,6 +21,7 @@ OPENROUTER_BASE_URL=https://openrouter.ai/api/v1/chat/completions  # optional
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -39,6 +41,7 @@ OUTPUT_DIR = ROOT_DIR / "Output"
 PROBLEM_ENTITIES_PATH = OUTPUT_DIR / "ProblemEntities.yaml"
 PLAN_ENTITIES_PATH = OUTPUT_DIR / "PlanEntities.yaml"
 STUDENT_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "StudentAnswerEntities.yaml"
+TEACHER_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "TeacherAnswerEntities.yaml"
 LOG_PATH = OUTPUT_DIR / "Log.yaml"
 
 DEFAULT_MODEL = "google/gemini-2.0-flash-001"
@@ -1605,13 +1608,32 @@ def dump_entities(entities: Dict[str, Dict[str, Any]]) -> None:
         )
 
 
-def copy_entities_to_downstream_files() -> None:
-    shutil.copyfile(PROBLEM_ENTITIES_PATH, PLAN_ENTITIES_PATH)
+def copy_entities_to_downstream_files(copy_targets: str) -> None:
+    if copy_targets in {"all", "solver"}:
+        shutil.copyfile(PROBLEM_ENTITIES_PATH, PLAN_ENTITIES_PATH)
     shutil.copyfile(PROBLEM_ENTITIES_PATH, STUDENT_ANSWER_ENTITIES_PATH)
+    if copy_targets in {"all", "grader"}:
+        shutil.copyfile(PROBLEM_ENTITIES_PATH, TEACHER_ANSWER_ENTITIES_PATH)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Formalize problem entities.")
+    parser.add_argument(
+        "--copy-targets",
+        choices=["all", "solver", "grader"],
+        default="all",
+        help=(
+            "all: copy sang PlanEntities, StudentAnswerEntities, TeacherAnswerEntities; "
+            "solver: copy sang PlanEntities và StudentAnswerEntities; "
+            "grader: chỉ copy sang StudentAnswerEntities và TeacherAnswerEntities."
+        ),
+    )
+    return parser.parse_args()
 
 
 def run() -> None:
     try:
+        args = parse_args()
         ensure_dirs()
         problem = read_problem()
         previous_error: Optional[str] = None
@@ -1649,7 +1671,7 @@ def run() -> None:
         entities = add_standard_conversion_entities(entities, problem=problem)
         entities = add_default_context_entities(problem, entities)
         dump_entities(entities)
-        copy_entities_to_downstream_files()
+        copy_entities_to_downstream_files(args.copy_targets)
         write_log("Pass ProblemFormalizer")
         print("Pass ProblemFormalizer")
     except Exception as exc:

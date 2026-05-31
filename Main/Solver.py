@@ -16,6 +16,7 @@ Ghi chú:
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -35,7 +36,12 @@ class Stage:
 STAGES = [
     Stage(
         name="ProblemFormalizer",
-        command=[sys.executable, str(ROOT_DIR / "Formalizer" / "ProblemFormalizer.py")],
+        command=[
+            sys.executable,
+            str(ROOT_DIR / "Formalizer" / "ProblemFormalizer.py"),
+            "--copy-targets",
+            "solver",
+        ],
     ),
     Stage(
         name="Planner",
@@ -62,10 +68,16 @@ def run_stage(stage: Stage) -> None:
 
 
 def run() -> None:
+    parse_args()
     for stage in STAGES:
         run_stage(stage)
 
     print("Pass Solver")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Solve a problem and build Plan.yaml/PlanEntities.yaml.")
+    return parser.parse_args()
 
 
 if __name__ == "__main__":

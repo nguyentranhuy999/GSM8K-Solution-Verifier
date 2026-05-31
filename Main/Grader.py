@@ -1,24 +1,15 @@
 """
 Main/Grader.py
 
-Pipeline chấm lời giải học sinh.
+Pipeline chấm lời giải học sinh bằng lời giải giáo viên.
 
-Mặc định Grader chỉ dùng reference đã có sẵn:
-- Output/ProblemEntities.yaml
-- Output/Plan.yaml
-- Output/PlanEntities.yaml
-
-Chạy mặc định:
-1. Formalizer/StudentAnswerFormalizer.py
-2. Verifier/InsideChecker.py --mode student
-3. Formalizer/Mapper.py
-4. Verifier/CompareChecker.py
-
-Nếu muốn build reference trong cùng một lệnh:
-- python3 Main/Grader.py --reference solver
-- python3 Main/Grader.py --reference teacher
-
-Khi đó Grader sẽ gọi Main/Tutor.py trước rồi mới chấm.
+Grader là pipeline riêng với Tutor/Solver:
+1. Formalizer/ProblemFormalizer.py tạo danh sách entity từ đề bài.
+2. Formalizer/StudentAnswerFormalizer.py tạo StudentPlan và hoàn thiện StudentAnswerEntities.
+3. Formalizer/TeacherAnswerFormalizer.py tạo TeacherPlan và hoàn thiện TeacherAnswerEntities.
+4. Verifier/InsideChecker.py --mode student kiểm tra nội bộ lời giải học sinh.
+5. Formalizer/Mapper.py --reference teacher map StudentAnswerEntities với TeacherAnswerEntities.
+6. Verifier/CompareChecker.py --reference teacher so sánh hai nhánh và ghi Diagnosis/Wrong.
 """
 
 from __future__ import annotations
@@ -41,22 +32,23 @@ class Stage:
     command: List[str]
 
 
-def tutor_stage(reference: str) -> Stage:
-    return Stage(
-        name="Tutor",
+GRADER_STAGES = [
+    Stage(
+        name="ProblemFormalizer",
         command=[
             sys.executable,
-            str(ROOT_DIR / "Main" / "Tutor.py"),
-            "--reference",
-            reference,
+            str(ROOT_DIR / "Formalizer" / "ProblemFormalizer.py"),
+            "--copy-targets",
+            "grader",
         ],
-    )
-
-
-GRADING_STAGES = [
+    ),
     Stage(
         name="StudentAnswerFormalizer",
         command=[sys.executable, str(ROOT_DIR / "Formalizer" / "StudentAnswerFormalizer.py")],
+    ),
+    Stage(
+        name="TeacherAnswerFormalizer",
+        command=[sys.executable, str(ROOT_DIR / "Formalizer" / "TeacherAnswerFormalizer.py")],
     ),
     Stage(
         name="InsideCheckerStudent",
@@ -69,16 +61,31 @@ GRADING_STAGES = [
     ),
     Stage(
         name="Mapper",
-        command=[sys.executable, str(ROOT_DIR / "Formalizer" / "Mapper.py")],
+        command=[
+            sys.executable,
+            str(ROOT_DIR / "Formalizer" / "Mapper.py"),
+            "--reference",
+            "teacher",
+        ],
     ),
     Stage(
         name="CompareChecker",
-        command=[sys.executable, str(ROOT_DIR / "Verifier" / "CompareChecker.py")],
+        command=[
+            sys.executable,
+            str(ROOT_DIR / "Verifier" / "CompareChecker.py"),
+            "--reference",
+            "teacher",
+        ],
     ),
 ]
 
 
-GRADING_OUTPUTS = [
+GRADER_OUTPUTS = [
+    "ProblemEntities.yaml",
+    "Plan.yaml",
+    "PlanEntities.yaml",
+    "TeacherPlan.yaml",
+    "TeacherAnswerEntities.yaml",
     "StudentPlan.yaml",
     "StudentAnswerEntities.yaml",
     "Diagnosis.yaml",
@@ -101,70 +108,30 @@ def run_stage(stage: Stage) -> None:
         raise SystemExit(completed.returncode)
 
 
-def clear_grading_outputs() -> None:
+def clear_grader_outputs() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    for filename in GRADING_OUTPUTS:
+    for filename in GRADER_OUTPUTS:
         path = OUTPUT_DIR / filename
         if path.exists():
             path.unlink()
 
 
-def ensure_reference_exists() -> None:
-    missing = [
-        str(path.relative_to(ROOT_DIR))
-        for path in [
-            OUTPUT_DIR / "ProblemEntities.yaml",
-            OUTPUT_DIR / "Plan.yaml",
-            OUTPUT_DIR / "PlanEntities.yaml",
-        ]
-        if not path.exists()
-    ]
-    if missing:
-        files = ", ".join(missing)
-        raise SystemExit(
-            "Thiếu reference để chấm: "
-            f"{files}. Hãy chạy `python3 Main/Tutor.py` trước, hoặc chạy "
-            "`python3 Main/Grader.py --reference solver` / "
-            "`python3 Main/Grader.py --reference teacher`."
-        )
-
-
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Grade a student answer against a reference plan.")
-    parser.add_argument(
-        "--reference",
-        choices=["existing", "solver", "teacher"],
-        default="existing",
-        help=(
-            "existing: dùng Output/Plan.yaml hiện có; "
-            "solver: gọi Tutor tự giải trước; "
-            "teacher: gọi Tutor dùng Input/TeacherAnswer.txt trước."
-        ),
-    )
+    parser = argparse.ArgumentParser(description="Grade a student answer against a teacher answer.")
     parser.add_argument(
         "--keep-existing",
         action="store_true",
-        help="Không xoá output chấm cũ trước khi chạy.",
+        help="Không xoá output cũ trước khi chạy.",
     )
     return parser.parse_args()
-
-
-def stages_for_args(args: argparse.Namespace) -> List[Stage]:
-    stages: List[Stage] = []
-    if args.reference in {"solver", "teacher"}:
-        stages.append(tutor_stage(args.reference))
-    else:
-        ensure_reference_exists()
-    stages.extend(GRADING_STAGES)
-    return stages
 
 
 def run() -> None:
     args = parse_args()
     if not args.keep_existing:
-        clear_grading_outputs()
+        clear_grader_outputs()
 
-    for stage in stages_for_args(args):
+    for stage in GRADER_STAGES:
         run_stage(stage)
 
     print("Pass Grader")

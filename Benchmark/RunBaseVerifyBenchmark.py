@@ -7,7 +7,6 @@ import os
 import re
 import shutil
 import time
-from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -91,6 +90,19 @@ SEVERE_LABELS_IF_WRONG_MISSING = {
     "logic error",
     "misreading",
     "missing step",
+    "wrong calculation",
+    "wrong relationship",
+    "wrong target",
+    "wrong unit conversion",
+}
+
+ERROR_CAUSING_LABELS = {
+    "do not convert units",
+    "logic error",
+    "misreading",
+    "missing step",
+    "only final answer",
+    "unit missing",
     "wrong calculation",
     "wrong relationship",
     "wrong target",
@@ -220,10 +232,6 @@ def safe_divide(numerator: int | float, denominator: int | float) -> float:
 
 def f1_score(precision: float, recall: float) -> float:
     return safe_divide(2 * precision * recall, precision + recall)
-
-
-def sorted_counter(counter: Counter[str]) -> dict[str, int]:
-    return dict(sorted(counter.items(), key=lambda item: (-item[1], item[0])))
 
 
 def score_labels(expected: set[str], predicted: set[str]) -> tuple[int, set[str], set[str], set[str]]:
@@ -629,22 +637,13 @@ def compute_summary(rows: list[dict[str, Any]], total_limit: int, input_path: Pa
     attempted = [row for row in rows if not row.get("error")]
     attempted_rows = len(attempted)
     exact_matches = [row for row in attempted if row.get("exact_match") == "yes"]
-    label_matches = [row for row in attempted if row.get("label_exact_match") == "yes"]
     wrong_matches = [row for row in attempted if row.get("wrong_match") == "yes"]
-    partial_label_matches = [
-        row for row in attempted
-        if parse_label_set(row.get("label_tp"))
-    ]
-    label_score = sum(int(row.get("label_score") or 0) for row in attempted)
 
-    label_tp_count = 0
-    label_fp_count = 0
-    label_fn_count = 0
-    expected_label_counts: Counter[str] = Counter()
-    predicted_label_counts: Counter[str] = Counter()
-    label_tp_counts: Counter[str] = Counter()
-    label_fp_counts: Counter[str] = Counter()
-    label_fn_counts: Counter[str] = Counter()
+    error_label_tp_count = 0
+    error_label_fp_count = 0
+    error_label_fn_count = 0
+    error_label_expected_rows = 0
+    error_label_partial_match_rows = 0
     wrong_yes_tp = 0
     wrong_yes_fp = 0
     wrong_yes_fn = 0
@@ -653,18 +652,20 @@ def compute_summary(rows: list[dict[str, Any]], total_limit: int, input_path: Pa
     for row in attempted:
         expected_labels = parse_label_set(row.get("expected_labels"))
         predicted_labels = parse_label_set(row.get("predicted_labels"))
-        tp = parse_label_set(row.get("label_tp"))
-        fp = parse_label_set(row.get("label_fp"))
-        fn = parse_label_set(row.get("label_fn"))
 
-        label_tp_count += len(tp)
-        label_fp_count += len(fp)
-        label_fn_count += len(fn)
-        expected_label_counts.update(expected_labels)
-        predicted_label_counts.update(predicted_labels)
-        label_tp_counts.update(tp)
-        label_fp_counts.update(fp)
-        label_fn_counts.update(fn)
+        expected_error_labels = expected_labels & ERROR_CAUSING_LABELS
+        predicted_error_labels = predicted_labels & ERROR_CAUSING_LABELS
+        error_tp = expected_error_labels & predicted_error_labels
+        error_fp = predicted_error_labels - expected_error_labels
+        error_fn = expected_error_labels - predicted_error_labels
+
+        error_label_tp_count += len(error_tp)
+        error_label_fp_count += len(error_fp)
+        error_label_fn_count += len(error_fn)
+        if expected_error_labels:
+            error_label_expected_rows += 1
+            if error_tp:
+                error_label_partial_match_rows += 1
 
         expected_wrong_yes = normalize_wrong(row.get("expected_wrong")) == "yes"
         predicted_wrong_yes = normalize_wrong(row.get("predicted_wrong")) == "yes"
@@ -677,12 +678,21 @@ def compute_summary(rows: list[dict[str, Any]], total_limit: int, input_path: Pa
         else:
             wrong_yes_tn += 1
 
-    label_precision_micro = safe_divide(label_tp_count, label_tp_count + label_fp_count)
-    label_recall_micro = safe_divide(label_tp_count, label_tp_count + label_fn_count)
-    label_f1_micro = f1_score(label_precision_micro, label_recall_micro)
+    error_label_precision_micro = safe_divide(
+        error_label_tp_count,
+        error_label_tp_count + error_label_fp_count,
+    )
+    error_label_recall_micro = safe_divide(
+        error_label_tp_count,
+        error_label_tp_count + error_label_fn_count,
+    )
+    error_label_f1_micro = f1_score(error_label_precision_micro, error_label_recall_micro)
     wrong_yes_precision = safe_divide(wrong_yes_tp, wrong_yes_tp + wrong_yes_fp)
     wrong_yes_recall = safe_divide(wrong_yes_tp, wrong_yes_tp + wrong_yes_fn)
     wrong_yes_f1 = f1_score(wrong_yes_precision, wrong_yes_recall)
+    wrong_accuracy = safe_divide(len(wrong_matches), attempted_rows)
+    error_label_hit_rate = safe_divide(error_label_partial_match_rows, error_label_expected_rows)
+    exact_match = safe_divide(len(exact_matches), attempted_rows)
 
     error_stage_counts: dict[str, int] = {}
     for row in error_rows:
@@ -699,34 +709,27 @@ def compute_summary(rows: list[dict[str, Any]], total_limit: int, input_path: Pa
         "pending_rows": max(total_limit - completed, 0),
         "attempted_rows": attempted_rows,
         "error_rows": len(error_rows),
-        "exact_match_rows": len(exact_matches),
-        "label_exact_match_rows": len(label_matches),
-        "label_partial_match_rows": len(partial_label_matches),
-        "wrong_match_rows": len(wrong_matches),
-        "label_score": label_score,
-        "exact_match_accuracy_completed": len(exact_matches) / completed if completed else 0.0,
-        "exact_match_accuracy_attempted": len(exact_matches) / attempted_rows if attempted_rows else 0.0,
-        "label_accuracy_attempted": len(label_matches) / attempted_rows if attempted_rows else 0.0,
-        "label_partial_accuracy_attempted": len(partial_label_matches) / attempted_rows if attempted_rows else 0.0,
-        "label_precision_micro": label_precision_micro,
-        "label_recall_micro": label_recall_micro,
-        "label_f1_micro": label_f1_micro,
-        "label_true_positive_count": label_tp_count,
-        "label_false_positive_count": label_fp_count,
-        "label_false_negative_count": label_fn_count,
-        "wrong_accuracy_attempted": len(wrong_matches) / attempted_rows if attempted_rows else 0.0,
-        "wrong_yes_precision": wrong_yes_precision,
-        "wrong_yes_recall": wrong_yes_recall,
-        "wrong_yes_f1": wrong_yes_f1,
-        "wrong_yes_true_positive_rows": wrong_yes_tp,
-        "wrong_yes_false_positive_rows": wrong_yes_fp,
-        "wrong_yes_false_negative_rows": wrong_yes_fn,
-        "wrong_yes_true_negative_rows": wrong_yes_tn,
-        "expected_label_counts": sorted_counter(expected_label_counts),
-        "predicted_label_counts": sorted_counter(predicted_label_counts),
-        "label_true_positive_counts": sorted_counter(label_tp_counts),
-        "label_false_positive_counts": sorted_counter(label_fp_counts),
-        "label_false_negative_counts": sorted_counter(label_fn_counts),
+        "metrics": {
+            "wrong_accuracy": wrong_accuracy,
+            "wrong_f1": wrong_yes_f1,
+            "error_label_hit_rate": error_label_hit_rate,
+            "error_label_f1": error_label_f1_micro,
+            "exact_match": exact_match,
+        },
+        "support": {
+            "exact_match_rows": len(exact_matches),
+            "wrong_match_rows": len(wrong_matches),
+            "wrong_tp": wrong_yes_tp,
+            "wrong_fp": wrong_yes_fp,
+            "wrong_tn": wrong_yes_tn,
+            "wrong_fn": wrong_yes_fn,
+            "error_label_expected_rows": error_label_expected_rows,
+            "error_label_partial_match_rows": error_label_partial_match_rows,
+            "error_label_tp": error_label_tp_count,
+            "error_label_fp": error_label_fp_count,
+            "error_label_fn": error_label_fn_count,
+        },
+        "error_causing_labels": sorted(ERROR_CAUSING_LABELS),
         "error_stage_counts": error_stage_counts,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
@@ -925,15 +928,13 @@ def dashboard_html(cases: list[dict[str, Any]], summary: dict[str, Any]) -> str:
     const stageEl = document.getElementById('stage');
     function esc(s) {{ return String(s ?? '').replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c])); }}
     function renderStats() {{
+      const metrics = stats.metrics || {{}};
       const items = [
-        ['Total', stats.total_limit],
-        ['Completed', stats.completed_rows],
-        ['Exact', stats.exact_match_rows],
-        ['Errors', stats.error_rows],
-        ['Exact attempted', ((stats.exact_match_accuracy_attempted || 0) * 100).toFixed(2) + '%'],
-        ['Label F1', ((stats.label_f1_micro || 0) * 100).toFixed(2) + '%'],
-        ['Wrong acc', ((stats.wrong_accuracy_attempted || 0) * 100).toFixed(2) + '%'],
-        ['Wrong F1', ((stats.wrong_yes_f1 || 0) * 100).toFixed(2) + '%'],
+        ['Wrong Accuracy', ((metrics.wrong_accuracy || 0) * 100).toFixed(2) + '%'],
+        ['Wrong F1', ((metrics.wrong_f1 || 0) * 100).toFixed(2) + '%'],
+        ['Error Label Hit Rate', ((metrics.error_label_hit_rate || 0) * 100).toFixed(2) + '%'],
+        ['Error Label F1', ((metrics.error_label_f1 || 0) * 100).toFixed(2) + '%'],
+        ['Exact Match', ((metrics.exact_match || 0) * 100).toFixed(2) + '%'],
       ];
       statsEl.innerHTML = items.map(([k,v]) => `<div class="stat"><b>${{esc(v)}}</b><span>${{esc(k)}}</span></div>`).join('');
     }}
@@ -1020,6 +1021,7 @@ def write_error_report(error_dir: Path, rows: list[dict[str, Any]], summary: dic
             }
         )
 
+    metrics = summary.get("metrics", {})
     summary_text = "\n".join(
         [
             "# Base Verify Benchmark Summary",
@@ -1028,21 +1030,11 @@ def write_error_report(error_dir: Path, rows: list[dict[str, Any]], summary: dic
             f"- Completed: {summary.get('completed_rows')}",
             f"- Attempted: {summary.get('attempted_rows')}",
             f"- Errors: {summary.get('error_rows')}",
-            f"- Exact matches: {summary.get('exact_match_rows')}",
-            f"- Label exact matches: {summary.get('label_exact_match_rows')}",
-            f"- Label partial matches: {summary.get('label_partial_match_rows')}",
-            f"- Wrong matches: {summary.get('wrong_match_rows')}",
-            f"- Label score: {summary.get('label_score')}",
-            f"- Exact accuracy attempted: {summary.get('exact_match_accuracy_attempted'):.4f}",
-            f"- Label exact accuracy attempted: {summary.get('label_accuracy_attempted'):.4f}",
-            f"- Label partial accuracy attempted: {summary.get('label_partial_accuracy_attempted'):.4f}",
-            f"- Label precision micro: {summary.get('label_precision_micro'):.4f}",
-            f"- Label recall micro: {summary.get('label_recall_micro'):.4f}",
-            f"- Label F1 micro: {summary.get('label_f1_micro'):.4f}",
-            f"- Wrong accuracy attempted: {summary.get('wrong_accuracy_attempted'):.4f}",
-            f"- Wrong yes precision: {summary.get('wrong_yes_precision'):.4f}",
-            f"- Wrong yes recall: {summary.get('wrong_yes_recall'):.4f}",
-            f"- Wrong yes F1: {summary.get('wrong_yes_f1'):.4f}",
+            f"- Wrong Accuracy: {metrics.get('wrong_accuracy'):.4f}",
+            f"- Wrong F1: {metrics.get('wrong_f1'):.4f}",
+            f"- Error Label Hit Rate: {metrics.get('error_label_hit_rate'):.4f}",
+            f"- Error Label F1: {metrics.get('error_label_f1'):.4f}",
+            f"- Exact Match: {metrics.get('exact_match'):.4f}",
             f"- Updated at: {summary.get('updated_at')}",
             "",
         ]
@@ -1059,30 +1051,15 @@ def print_run_summary(
     summary_path: Path,
     error_dir: Path,
 ) -> None:
+    metrics = summary["metrics"]
     print(f"Completed rows: {summary['completed_rows']}")
     print(f"Attempted rows: {summary['attempted_rows']}")
     print(f"Error rows: {summary['error_rows']}")
-    print(f"Exact matches: {summary['exact_match_rows']}")
-    print(f"Label exact matches: {summary['label_exact_match_rows']}")
-    print(f"Label partial matches: {summary['label_partial_match_rows']}")
-    print(f"Wrong matches: {summary['wrong_match_rows']}")
-    print(f"Label score: {summary['label_score']}")
-    print(f"Exact accuracy attempted: {summary['exact_match_accuracy_attempted']:.2%}")
-    print(f"Label accuracy attempted: {summary['label_accuracy_attempted']:.2%}")
-    print(f"Label partial accuracy attempted: {summary['label_partial_accuracy_attempted']:.2%}")
-    print(
-        "Label precision/recall/F1: "
-        f"{summary['label_precision_micro']:.2%} / "
-        f"{summary['label_recall_micro']:.2%} / "
-        f"{summary['label_f1_micro']:.2%}"
-    )
-    print(f"Wrong accuracy attempted: {summary['wrong_accuracy_attempted']:.2%}")
-    print(
-        "Wrong yes precision/recall/F1: "
-        f"{summary['wrong_yes_precision']:.2%} / "
-        f"{summary['wrong_yes_recall']:.2%} / "
-        f"{summary['wrong_yes_f1']:.2%}"
-    )
+    print(f"Wrong Accuracy: {metrics['wrong_accuracy']:.2%}")
+    print(f"Wrong F1: {metrics['wrong_f1']:.2%}")
+    print(f"Error Label Hit Rate: {metrics['error_label_hit_rate']:.2%}")
+    print(f"Error Label F1: {metrics['error_label_f1']:.2%}")
+    print(f"Exact Match: {metrics['exact_match']:.2%}")
     print(f"Errors by stage: {summary['error_stage_counts']}")
     if args.verbose:
         if args.write_csv:

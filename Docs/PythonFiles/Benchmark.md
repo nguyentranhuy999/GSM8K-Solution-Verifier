@@ -111,12 +111,12 @@ write Input/Problem.txt
 write Input/TeacherAnswer.txt
 write Input/StudentAnswer.txt
 clear Output
-python3 Main/Grader.py --reference teacher
+python3 Main/Grader.py
 read Diagnosis.yaml + Wrong.yaml
 compare với cột type + wrong trong benchmark
 ```
 
-### Vì Sao Dùng `Grader.py --reference teacher`
+### Vì Sao Dùng `Grader.py`
 
 Luồng này không dùng solver tự sinh reference. Nó dùng official teacher answer
 từ benchmark để tạo reference. Mục đích là đo verifier/grader thay vì đo chất
@@ -131,7 +131,7 @@ Main/Main.py --reference teacher
 thành:
 
 ```text
-Main/Grader.py --reference teacher
+Main/Grader.py
 ```
 
 ### Input CSV
@@ -182,6 +182,11 @@ Exact match yêu cầu:
 
 - wrong match;
 - label set match hoàn toàn.
+
+Ngoài exact match, script cũng tính metric riêng cho nhóm
+`error_causing_labels`, gồm `unit missing` và `only final answer`, để đo khả năng
+bắt đúng loại lỗi có thể làm bài bị xem là sai mà không bị nhiễu bởi các label
+trình bày như `combine step` hoặc `reverse steps`.
 
 ### Chạy Song Song
 
@@ -245,25 +250,27 @@ Nó là baseline để so với pipeline symbolic.
 
 Script có whitelist label:
 
-- `all right`
-- `answer by word`
-- `combine step`
-- `different calculation`
-- `do not convert units`
-- `extra step`
-- `logic error`
-- `misreading`
-- `missing step`
-- `only final answer`
-- `reverse steps`
-- `spelling errors`
-- `step separation`
-- `unit missing`
-- `word problem`
-- `wrong calculation`
-- `wrong relationship`
-- `wrong target`
-- `wrong unit conversion`
+| Label | Ý nghĩa |
+|---|---|
+| `all right` | Lời giải đúng, không có lỗi đáng kể. |
+| `answer by word` | Học sinh trả lời chủ yếu bằng chữ, không viết phép tính rõ ràng; thường không sai nếu kết quả đúng. |
+| `combine step` | Học sinh gộp nhiều bước chuẩn thành một bước hợp lệ. |
+| `different calculation` | Học sinh dùng cách tính khác nhưng vẫn đúng. |
+| `do not convert units` | Cần đổi đơn vị nhưng học sinh không đổi. |
+| `extra step` | Có bước thừa nhưng không nhất thiết làm sai kết quả. |
+| `logic error` | Lỗi suy luận tổng quát, không chỉ là tính nhầm hay đọc sai số. |
+| `misreading` | Đọc sai dữ kiện/điều kiện trong đề. |
+| `missing step` | Thiếu bước cần thiết làm lời giải không đủ hoặc sai. |
+| `only final answer` | Chỉ đưa đáp án cuối, không có hoặc gần như không có lập luận. |
+| `reverse steps` | Làm các bước đúng nhưng khác thứ tự lời giải chuẩn. |
+| `spelling errors` | Lỗi chính tả/diễn đạt không làm đổi toán học. |
+| `step separation` | Tách một bước chuẩn thành nhiều bước nhỏ hợp lệ. |
+| `unit missing` | Thiếu đơn vị trong lời giải hoặc kết quả. |
+| `word problem` | Diễn giải bằng lời/tối nghĩa, khó map thành bước tính rõ ràng. |
+| `wrong calculation` | Công thức đúng nhưng tính số sai. |
+| `wrong relationship` | Dùng sai quan hệ/toán tử/công thức. |
+| `wrong target` | Giải ra đại lượng khác với thứ đề hỏi. |
+| `wrong unit conversion` | Có đổi đơn vị nhưng dùng sai hệ số hoặc sai chiều đổi. |
 
 `LABEL_RUBRIC` giải thích từng nhãn để model không chỉ đoán label theo tên.
 
@@ -280,25 +287,65 @@ Nếu model trả label ngoài whitelist, row bị error/retry.
 
 ### Metric
 
-Ngoài exact match, script hiện có thêm metric mềm:
+Summary hiện tại chỉ báo cáo 5 metric chính để tránh nhiễu:
 
-- `label_partial_match_rows`;
-- `label_precision_micro`;
-- `label_recall_micro`;
-- `label_f1_micro`;
-- `wrong_accuracy_attempted`;
-- `wrong_yes_precision`;
-- `wrong_yes_recall`;
-- `wrong_yes_f1`;
-- label distribution:
-  - expected label counts;
-  - predicted label counts;
-  - true positive counts;
-  - false positive counts;
-  - false negative counts.
+| Metric | Ý nghĩa |
+|---|---|
+| `wrong_accuracy` | Tỷ lệ dự đoán đúng bài sai hay không sai (`wrong=yes/no`). Đây là metric dễ hiểu nhất. |
+| `wrong_f1` | F1 cho lớp `wrong=yes`, cân bằng giữa bỏ sót bài sai và báo sai nhầm bài đúng. |
+| `error_label_hit_rate` | Trong các bài có label lỗi chính, tỷ lệ bài bắt được ít nhất một label lỗi đúng. |
+| `error_label_f1` | F1 cho riêng nhóm label gây lỗi. Metric này đo chất lượng phân loại loại lỗi chính. |
+| `exact_match` | Tỷ lệ khớp hoàn toàn cả `wrong` và toàn bộ set label. Đây là metric nghiêm ngặt để tham khảo. |
 
-Lý do thêm metric mềm: exact label set quá nghiêm ngặt. Model có thể phát hiện
-đúng bài sai (`wrong=yes`) nhưng gắn nhãn chi tiết không khớp benchmark.
+Các field như `completed_rows`, `attempted_rows`, `error_rows`,
+`error_stage_counts`, `support` chỉ là metadata/debug để biết benchmark chạy đủ
+không và số dòng hỗ trợ phía sau metric. Chúng không được xem là metric báo cáo
+chính.
+
+`support` hiện chứa các count để giải thích metric:
+
+| Field | Ý nghĩa |
+|---|---|
+| `exact_match_rows` | Số bài khớp hoàn toàn cả `wrong` và label set. |
+| `wrong_match_rows` | Số bài dự đoán đúng `wrong=yes/no`. |
+| `wrong_tp` | Expected `wrong=yes`, predicted cũng `yes`. |
+| `wrong_fp` | Expected `wrong=no`, predicted `yes`. |
+| `wrong_tn` | Expected `wrong=no`, predicted cũng `no`. |
+| `wrong_fn` | Expected `wrong=yes`, predicted `no`. |
+| `error_label_expected_rows` | Số bài ground truth có ít nhất một label trong nhóm lỗi chính. |
+| `error_label_partial_match_rows` | Số bài bắt được ít nhất một label lỗi chính đúng. |
+| `error_label_tp` | Tổng số error-causing label bắt đúng. |
+| `error_label_fp` | Tổng số error-causing label bị dự đoán thừa. |
+| `error_label_fn` | Tổng số error-causing label bị bỏ sót. |
+
+Lý do chỉ giữ 5 metric: exact label set quá nghiêm ngặt, còn toàn bộ taxonomy
+label có nhiều nhãn trình bày như `combine step`, `reverse steps`,
+`spelling errors`. Bộ 5 metric trên trả lời đủ các câu hỏi chính:
+
+- hệ thống có biết bài sai hay đúng không;
+- hệ thống có bắt được bài sai không;
+- hệ thống có bắt được ít nhất một lỗi chính không;
+- hệ thống phân loại lỗi chính tốt không;
+- hệ thống có khớp hoàn toàn benchmark không.
+
+Nhóm `error_causing_labels` dùng để đo riêng các nhãn có thể làm bài bị xem là
+sai hoặc không đủ điều kiện chấm đúng:
+
+| Label | Vì sao nằm trong nhóm lỗi |
+|---|---|
+| `do not convert units` | Không đổi đơn vị khi đề bắt buộc đổi, dễ làm phép tính sai đại lượng. |
+| `logic error` | Suy luận sai nên ảnh hưởng trực tiếp đến lời giải. |
+| `misreading` | Dùng sai dữ kiện đề bài, thường kéo toàn bộ lời giải sai. |
+| `missing step` | Thiếu bước cần thiết nên lời giải không đủ hoặc không thể verify đúng. |
+| `only final answer` | Không có lập luận/phép tính để kiểm chứng, có thể bị xem là không đủ lời giải. |
+| `unit missing` | Thiếu đơn vị; trong benchmark này được tính vào nhóm lỗi cần bắt. |
+| `wrong calculation` | Quan hệ đúng nhưng tính số sai, làm đáp án sai. |
+| `wrong relationship` | Công thức/toán tử sai, là lỗi toán học cốt lõi. |
+| `wrong target` | Tính ra đại lượng khác với câu hỏi. |
+| `wrong unit conversion` | Có đổi đơn vị nhưng đổi sai hệ số hoặc sai chiều. |
+
+Metric nhóm lỗi nằm giữa `wrong_accuracy` và `exact_match`: nó chi tiết hơn việc
+chỉ biết bài sai hay đúng, nhưng không rộng và nhiễu như toàn bộ taxonomy label.
 
 ### Rebuild Report Không Gọi LLM
 
@@ -361,4 +408,3 @@ Mỗi bài lỗi có nhiều file YAML. Dashboard giúp:
 - xem expected/predicted nhanh;
 - click từng file trong case;
 - tránh phải mở thủ công hàng chục folder.
-

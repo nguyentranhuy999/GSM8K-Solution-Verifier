@@ -7,12 +7,9 @@ Nhiệm vụ:
   - Input/TeacherAnswer.txt
   - Output/ProblemEntities.yaml
 - Gọi LLM qua OpenRouter để formalize lời giải chuẩn của giáo viên.
-- Ghi output debug:
+- Ghi output:
   - Output/TeacherPlan.yaml
   - Output/TeacherAnswerEntities.yaml
-- Đồng thời ghi reference side cho pipeline so sánh hiện có:
-  - Output/Plan.yaml
-  - Output/PlanEntities.yaml
 
 Luồng này dùng khi muốn so sánh bài học sinh với lời giải giáo viên thay vì
 lời giải do Solver tự lập.
@@ -46,8 +43,6 @@ PROBLEM_PATH = INPUT_DIR / "Problem.txt"
 TEACHER_ANSWER_PATH = INPUT_DIR / "TeacherAnswer.txt"
 PROBLEM_ENTITIES_PATH = OUTPUT_DIR / "ProblemEntities.yaml"
 
-PLAN_PATH = OUTPUT_DIR / "Plan.yaml"
-PLAN_ENTITIES_PATH = OUTPUT_DIR / "PlanEntities.yaml"
 TEACHER_PLAN_PATH = OUTPUT_DIR / "TeacherPlan.yaml"
 TEACHER_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "TeacherAnswerEntities.yaml"
 LOG_PATH = OUTPUT_DIR / "Log.yaml"
@@ -328,14 +323,6 @@ def validate_teacher_plan(
     return plan
 
 
-def reference_plan_from_teacher_plan(teacher_plan: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        key: value
-        for key, value in teacher_plan.items()
-        if key.startswith("step")
-    }
-
-
 def run() -> None:
     try:
         ensure_dirs()
@@ -374,12 +361,9 @@ def run() -> None:
             raise TeacherAnswerFormalizerError(str(last_validation_error))
 
         teacher_entities = student_formalizer.merge_student_plan_into_entities(teacher_plan, problem_entities)
-        reference_plan = reference_plan_from_teacher_plan(teacher_plan)
 
         write_yaml_file(TEACHER_PLAN_PATH, teacher_plan)
         write_yaml_file(TEACHER_ANSWER_ENTITIES_PATH, teacher_entities)
-        write_yaml_file(PLAN_PATH, reference_plan)
-        write_yaml_file(PLAN_ENTITIES_PATH, teacher_entities)
 
         write_log("Pass TeacherAnswerFormalizer")
         print("Pass TeacherAnswerFormalizer")
