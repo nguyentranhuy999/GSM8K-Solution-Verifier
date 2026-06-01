@@ -1,8 +1,0 @@
-Ryan started with 36 tokens.
-His parents bought him 7 × 7 = 49 new tokens.
-He spent 1/3 of 36 = 12 tokens on Pac-Man.
-He spent 1/4 of 36 = 9 tokens on Candy Crush.
-He spent 7 tokens on Ski-ball.
-In total, he spent 12 + 9 + 7 = 28 tokens.
-After spending tokens and receiving new ones, he had 36 - 28 + 49 = 57 tokens.
-Therefore, the final answer is 57.
