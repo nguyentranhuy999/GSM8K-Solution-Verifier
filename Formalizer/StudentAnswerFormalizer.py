@@ -39,12 +39,14 @@ Ghi chú:
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
 import sys
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -227,6 +229,16 @@ def write_log(status: str, message: str = "") -> None:
     write_yaml_file(LOG_PATH, log_data)
 
 
+def write_log_items(key: str, items: List[Dict[str, Any]]) -> None:
+    ensure_dirs()
+    log_data = read_yaml_file(LOG_PATH, required=False)
+    if items:
+        log_data[key] = items
+    else:
+        log_data.pop(key, None)
+    write_yaml_file(LOG_PATH, log_data)
+
+
 # -----------------------------------------------------------------------------
 # Prompt
 # -----------------------------------------------------------------------------
@@ -272,7 +284,7 @@ StudentPlan.yaml:
 Diagnosis.yaml:
   []
 
-Mỗi step trong StudentPlan.yaml có đúng 5 trường:
+Mỗi step trong StudentPlan.yaml có 5 trường bắt buộc:
 - expr: biểu thức symbolic bằng tên entity.
 - result: entity được tạo ra.
 - result_unit: đơn vị result. Nếu học sinh quên đơn vị thì ghi missing. Nếu scalar thì có thể null.
@@ -289,6 +301,11 @@ Quy tắc step:
 - Mỗi dòng/phần có dấu "=" trong bài làm học sinh phải tạo đúng một step riêng, theo đúng thứ tự xuất hiện.
 - reported_expr phải giữ đúng phép tính học sinh viết ở dòng đó, không thay bằng phép tính tương đương hay phép tính tổng hợp.
 - expr phải tương ứng với chính reported_expr của step đó, không được dùng expr của bước khác.
+- expr phải bao phủ toàn bộ vế trái của reported_expr. Ví dụ reported_expr là 30 * 2 + 50 = 110
+  thì expr phải có entity tương ứng cho cả 30, 2 và 50, không được bỏ bớt toán hạng.
+- Không tạo bước chỉ copy một entity sang entity khác.
+- Không tạo reported_expr dạng tautology như 110 = 110. Nếu step trước đã tính ra đáp án cuối,
+  đặt result của step đó là target thay vì thêm bước copy.
 
 Quy tắc Diagnosis.yaml:
 - Nếu bài làm có lỗi chính tả đáng kể, thêm diagnosis: spelling errors.
@@ -327,7 +344,7 @@ def build_user_prompt(
         sort_keys=False,
         default_flow_style=False,
     )
-    required_equations = extract_equations_from_student_answer(student_answer)
+    equation_hints = extract_equations_from_student_answer(student_answer)
     retry_note = ""
     if previous_error:
         retry_note = f"""
@@ -335,7 +352,8 @@ def build_user_prompt(
 Output trước bị reject vì lỗi:
 {previous_error}
 
-Hãy sửa bằng cách tạo đủ step cho TẤT CẢ required reported_expr dưới đây, không bỏ dòng nào.
+Hãy sửa lỗi trên. Những equation rõ ràng được liệt kê bên dưới sẽ được code
+validator kiểm tra, nên không được bỏ hoặc gộp vào step khác.
 """.rstrip()
 
     return f"""
@@ -350,8 +368,8 @@ Output/ProblemEntities.yaml:
 Input/StudentAnswer.txt:
 {student_answer}
 
-Required reported_expr theo đúng thứ tự, mỗi dòng là một step riêng:
-{yaml.safe_dump(required_equations, allow_unicode=True, sort_keys=False).strip()}
+Detected explicit equations từ regex:
+{yaml.safe_dump(equation_hints, allow_unicode=True, sort_keys=False).strip()}
 {retry_note}
 """.strip()
 
@@ -467,6 +485,31 @@ def expr_tokens(expr: str) -> List[str]:
     return re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", expr)
 
 
+def normalize_expr_text(expr: Any, result: str) -> Optional[str]:
+    expr = normalize_empty(expr)
+    if expr is None:
+        return None
+    if not isinstance(expr, str) or not expr.strip():
+        raise StudentAnswerFormalizerError("expr phải là string không rỗng hoặc null.")
+
+    expr_text = expr.strip()
+    if "=" not in expr_text:
+        return expr_text
+
+    left, right = expr_text.split("=", 1)
+    left = left.strip()
+    right = right.strip()
+    if not right:
+        raise StudentAnswerFormalizerError(f"expr assignment thiếu vế phải: {expr_text!r}")
+
+    # LLM đôi khi trả `result = expression` trong field expr. Plan schema đã có
+    # field result riêng, nên giữ RHS để downstream parse được.
+    if re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", left):
+        return right
+
+    raise StudentAnswerFormalizerError(f"expr không được chứa phương trình nhiều vế: {expr_text!r}")
+
+
 def normalize_step_fields(step_name: str, step: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(step, dict):
         raise StudentAnswerFormalizerError(f"{step_name} phải là dictionary.")
@@ -483,12 +526,13 @@ def normalize_step_fields(step_name: str, step: Dict[str, Any]) -> Dict[str, Any
     if extra:
         raise StudentAnswerFormalizerError(f"{step_name} có trường thừa: {sorted(extra)}")
 
-    expr = step["expr"]
     result = step["result"]
     reported_expr = step["reported_expr"]
 
-    if not isinstance(expr, str) or not expr.strip():
-        raise StudentAnswerFormalizerError(f"{step_name}.expr phải là string không rỗng.")
+    if not isinstance(result, str):
+        raise StudentAnswerFormalizerError(f"{step_name}.result phải là string.")
+    expr = normalize_expr_text(step["expr"], result)
+
     if not isinstance(reported_expr, str) or "=" not in reported_expr:
         raise StudentAnswerFormalizerError(f"{step_name}.reported_expr phải là string có dấu '='.")
 
@@ -503,7 +547,7 @@ def normalize_step_fields(step_name: str, step: Dict[str, Any]) -> Dict[str, Any
         result_grand_unit = str(result_grand_unit).strip()
 
     return {
-        "expr": expr.strip(),
+        "expr": expr,
         "result": result.strip(),
         "result_unit": result_unit,
         "result_grand_unit": result_grand_unit,
@@ -511,20 +555,81 @@ def normalize_step_fields(step_name: str, step: Dict[str, Any]) -> Dict[str, Any
     }
 
 
+SIMPLE_NUMBER_RE = re.compile(r"[-+]?\d+(?:\.\d+)?")
+
+
+def simple_reported_number_value(text: str) -> Optional[Decimal]:
+    cleaned = normalize_arithmetic_text(text)
+    cleaned = re.sub(r"[a-zA-Z_]+", "", cleaned)
+    if not SIMPLE_NUMBER_RE.fullmatch(cleaned):
+        return None
+    try:
+        return Decimal(cleaned)
+    except InvalidOperation:
+        return None
+
+
+def reported_expr_is_tautology(reported_expr: str) -> bool:
+    parts = [part.strip() for part in reported_expr.split("=")]
+    if len(parts) < 2:
+        return False
+
+    for left, right in zip(parts, parts[1:]):
+        left_value = simple_reported_number_value(left)
+        right_value = simple_reported_number_value(right)
+        if left_value is not None and right_value is not None and left_value == right_value:
+            return True
+    return False
+
+
+def expr_is_single_entity_reference(expr: Optional[str]) -> bool:
+    if expr is None:
+        return False
+    return bool(re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", expr.strip()))
+
+
+def reported_lhs_has_arithmetic_operator(reported_expr: str) -> bool:
+    lhs = reported_expr.rsplit("=", 1)[0]
+    normalized_lhs = normalize_arithmetic_text(lhs)
+    if "*" in normalized_lhs or "/" in normalized_lhs or "+" in normalized_lhs:
+        return True
+    return bool(re.search(r"(?<!^)-", normalized_lhs))
+
+
+def validate_step_is_not_copy_step(step_name: str, step: Dict[str, Any]) -> None:
+    if reported_expr_is_tautology(step["reported_expr"]):
+        raise StudentAnswerFormalizerError(
+            f"{step_name}.reported_expr là tautology/copy step ({step['reported_expr']!r}). "
+            "Không tạo bước kiểu 110 = 110; nếu step trước đã ra đáp án cuối thì đặt result của step đó là target."
+        )
+
+    if (
+        expr_is_single_entity_reference(step["expr"])
+        and step["expr"] != step["result"]
+        and not reported_lhs_has_arithmetic_operator(step["reported_expr"])
+    ):
+        raise StudentAnswerFormalizerError(
+            f"{step_name} chỉ copy entity {step['expr']!r} sang {step['result']!r}. "
+            "Không tạo bước đổi tên/copy; hãy đặt result của phép tính thật là target nếu đó là đáp án cuối."
+        )
+
+
 def validate_and_normalize_student_plan(
     raw_plan: Dict[str, Any],
     problem_entities: Dict[str, Any],
     student_answer: Optional[str] = None,
+    *,
+    plan_label: str = "StudentPlan",
 ) -> Dict[str, Any]:
     if not raw_plan:
-        raise StudentAnswerFormalizerError("StudentPlan.yaml đang rỗng.")
+        raise StudentAnswerFormalizerError(f"{plan_label}.yaml đang rỗng.")
 
     if "target" not in raw_plan:
-        raise StudentAnswerFormalizerError("StudentPlan.yaml phải có dòng target ở cuối.")
+        raise StudentAnswerFormalizerError(f"{plan_label}.yaml phải có dòng target ở cuối.")
 
     keys = list(raw_plan.keys())
     if keys[-1] != "target":
-        raise StudentAnswerFormalizerError("Dòng target phải nằm cuối StudentPlan.yaml.")
+        raise StudentAnswerFormalizerError(f"Dòng target phải nằm cuối {plan_label}.yaml.")
 
     step_keys = keys[:-1]
     expected = [f"step{i}" for i in range(1, len(step_keys) + 1)]
@@ -536,11 +641,16 @@ def validate_and_normalize_student_plan(
 
     for step_name in step_keys:
         step = normalize_step_fields(step_name, raw_plan[step_name])
-        unknown_tokens = [token for token in expr_tokens(step["expr"]) if token not in available_entities]
+        unknown_tokens = [
+            token
+            for token in expr_tokens(step["expr"])
+            if token not in available_entities
+        ] if step["expr"] else []
         if unknown_tokens:
             raise StudentAnswerFormalizerError(
                 f"{step_name}.expr dùng entity chưa tồn tại hoặc chưa được tạo: {unknown_tokens}"
             )
+        validate_step_is_not_copy_step(step_name, step)
         available_entities.add(step["result"])
         normalized[step_name] = step
 
@@ -552,7 +662,7 @@ def validate_and_normalize_student_plan(
     # target có thể là result vừa tạo hoặc entity đã có trong đề.
     if target.strip() not in available_entities:
         raise StudentAnswerFormalizerError(
-            f"target {target!r} không tồn tại trong ProblemEntities hoặc result của StudentPlan."
+            f"target {target!r} không tồn tại trong ProblemEntities hoặc result của {plan_label}."
         )
 
     normalized["target"] = target.strip()
@@ -575,20 +685,23 @@ def decimal_equal(left: Decimal, right: Decimal) -> bool:
     return left == right
 
 
-def validate_reported_expr_grounded_in_student_answer(
+def reported_expr_grounding_warnings(
     student_plan: Dict[str, Any],
     student_answer: str,
-) -> None:
+    *,
+    answer_label: str = "bài làm học sinh",
+) -> List[Dict[str, Any]]:
     """
-    Không cho LLM tự dựng lời giải khác với bài làm học sinh.
+    Cảnh báo khi LLM đưa số không xuất hiện nguyên văn trong lời giải.
 
-    reported_expr là phép tính học sinh thực sự báo cáo, nên các số xuất hiện
-    trong đó phải có dấu vết trong Input/StudentAnswer.txt. Guard này bắt các
-    trường hợp LLM bỏ qua bài làm học sinh và tự giải lại đề bài.
+    Đây chỉ là soft guard. Nhiều lời giải dùng số bằng chữ, phần trăm, phân số
+    hoặc bỏ qua số trung gian, nên không được dùng check này để dừng pipeline.
     """
     answer_values = decimal_values_from_text(student_answer)
     if not answer_values:
-        return
+        return []
+
+    warnings: List[Dict[str, Any]] = []
 
     for step_name, step in student_plan.items():
         if not step_name.startswith("step"):
@@ -602,10 +715,29 @@ def validate_reported_expr_grounded_in_student_answer(
             if not any(decimal_equal(value, answer_value) for answer_value in answer_values)
         ]
         if ungrounded_values:
-            formatted = ", ".join(str(value.normalize()) for value in ungrounded_values)
-            raise StudentAnswerFormalizerError(
-                f"{step_name}.reported_expr chứa số không có trong bài làm học sinh: {formatted}."
+            warnings.append(
+                {
+                    "step": step_name,
+                    "reported_expr": reported_expr,
+                    "values": [str(value.normalize()) for value in ungrounded_values],
+                    "source": answer_label,
+                }
             )
+
+    return warnings
+
+
+def validate_reported_expr_grounded_in_student_answer(
+    student_plan: Dict[str, Any],
+    student_answer: str,
+    *,
+    answer_label: str = "bài làm học sinh",
+) -> List[Dict[str, Any]]:
+    return reported_expr_grounding_warnings(
+        student_plan,
+        student_answer,
+        answer_label=answer_label,
+    )
 
 
 CURRENCY_SYMBOL_RE = r"[$€£¥]"
@@ -633,7 +765,7 @@ def arithmetic_fingerprint(text: str) -> str:
 
     lhs, rhs = text.split("=", 1)
     factors = lhs.split("*")
-    if len(factors) > 1 and all(factors):
+    if len(factors) > 1 and all(factors) and not re.search(r"[+\-()]", lhs):
         lhs = "*".join(sorted(factors))
     return f"{lhs}={rhs}"
 
@@ -652,13 +784,24 @@ def equation_strings_from_line(line: str) -> List[str]:
     )
     line = line.replace("×", "*").replace("÷", "/")
 
-    # Giữ phần phép tính quanh dấu "=" và bỏ chữ/đơn vị ở hai bên.
+    # Bỏ từ mô tả hoặc đơn vị xen giữa số, nhưng giữ cấu trúc số học.
+    # Ví dụ: "Total = 30 notebooks + 80 pens = 110 items" -> "30 + 80 = 110".
+    line = re.sub(r"[A-Za-z_]+", " ", line)
+    line = re.sub(r"[^0-9.+\-*/()=\s]", " ", line)
+    line = re.sub(r"\s+", " ", line)
+
     equations: List[str] = []
-    allowed = r"0-9.+\-*/()\s"
-    pattern = re.compile(rf"(?<![A-Za-z0-9_])([-+]?\d[{allowed}]*=[\s+\-]*\d[{allowed}]*)")
+    pattern = re.compile(
+        r"(?<![0-9.])"
+        r"([-+]?\d(?:[0-9.\s()+\-*/]*?))"
+        r"\s*=\s*"
+        r"([-+]?\d+(?:\.\d+)?)"
+        r"(?![0-9])"
+    )
     for match in pattern.finditer(line):
-        equation = match.group(1).strip()
-        equation = equation.rstrip(".。;, ")
+        lhs = match.group(1).strip()
+        rhs = match.group(2).strip()
+        equation = f"{lhs} = {rhs}"
         equations.append(equation)
     return equations
 
@@ -671,6 +814,53 @@ def extract_equations_from_student_answer(student_answer: str) -> List[str]:
             equations.append(arithmetic_fingerprint(equation))
 
     return equations
+
+
+def reported_expr_fingerprints(plan: Dict[str, Any]) -> List[str]:
+    return [
+        arithmetic_fingerprint(str(step.get("reported_expr", "")))
+        for name, step in plan.items()
+        if name.startswith("step") and isinstance(step, dict)
+    ]
+
+
+def validate_reported_exprs_include_explicit_equations(
+    plan: Dict[str, Any],
+    answer_text: str,
+    *,
+    answer_label: str = "bài làm học sinh",
+) -> None:
+    """
+    Nếu lời giải có phép tính explicit dạng `a + b = c`, plan không được bỏ.
+
+    Đây mềm hơn validator exact cũ: plan có thể có thêm step implied, nhưng mọi
+    equation rõ ràng code extract được phải xuất hiện trong reported_expr theo
+    đúng thứ tự. Nhờ vậy không bỏ sót step như `7 * 7 = 49`.
+    """
+    expected = extract_equations_from_student_answer(answer_text)
+    if not expected:
+        return
+
+    reported = reported_expr_fingerprints(plan)
+    reported_index = 0
+    missing: List[str] = []
+
+    for expected_expr in expected:
+        found = False
+        for candidate_index in range(reported_index, len(reported)):
+            if reported[candidate_index] == expected_expr:
+                found = True
+                reported_index = candidate_index + 1
+                break
+        if not found:
+            missing.append(expected_expr)
+
+    if missing:
+        raise StudentAnswerFormalizerError(
+            f"StudentPlan bỏ hoặc gộp equation rõ ràng trong {answer_label}. "
+            f"Expected explicit equations theo thứ tự: {expected}; "
+            f"reported_expr hiện có: {reported}; thiếu: {missing}."
+        )
 
 
 def reported_expr_unit_hints_from_student_answer(student_answer: str) -> Dict[str, Tuple[str, str]]:
@@ -697,28 +887,6 @@ def apply_reported_expr_unit_hints(student_plan: Dict[str, Any], student_answer:
         result_unit, result_grand_unit = hint
         step["result_unit"] = result_unit
         step["result_grand_unit"] = result_grand_unit
-
-
-def validate_reported_exprs_follow_student_answer(
-    student_plan: Dict[str, Any],
-    student_answer: str,
-) -> None:
-    expected_equations = extract_equations_from_student_answer(student_answer)
-    if not expected_equations:
-        return
-
-    reported_equations = [
-        arithmetic_fingerprint(str(step.get("reported_expr", "")))
-        for name, step in student_plan.items()
-        if name.startswith("step")
-    ]
-
-    if reported_equations != expected_equations:
-        raise StudentAnswerFormalizerError(
-            "StudentPlan không khớp các phép tính học sinh viết. "
-            f"Expected reported_expr theo thứ tự: {expected_equations}; "
-            f"hiện là: {reported_equations}."
-        )
 
 
 def max_retries() -> int:
@@ -859,12 +1027,195 @@ def formalize_expr(expr: str, formalized_by_entity: Dict[str, Optional[str]]) ->
 
 
 # -----------------------------------------------------------------------------
+# Answer-local numeric literals
+# -----------------------------------------------------------------------------
+
+def fraction_from_entity_value(value: Any) -> Optional[Fraction]:
+    value = normalize_empty(value)
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return Fraction(str(value).replace(",", ""))
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
+def fraction_from_numeric_ast(node: ast.AST) -> Optional[Fraction]:
+    if isinstance(node, ast.Expression):
+        return fraction_from_numeric_ast(node.body)
+
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+            return None
+        try:
+            return Fraction(str(node.value))
+        except ValueError:
+            return None
+
+    if isinstance(node, ast.UnaryOp):
+        operand = fraction_from_numeric_ast(node.operand)
+        if operand is None:
+            return None
+        if isinstance(node.op, ast.UAdd):
+            return operand
+        if isinstance(node.op, ast.USub):
+            return -operand
+        return None
+
+    if isinstance(node, ast.BinOp):
+        left = fraction_from_numeric_ast(node.left)
+        right = fraction_from_numeric_ast(node.right)
+        if left is None or right is None:
+            return None
+        if isinstance(node.op, ast.Add):
+            return left + right
+        if isinstance(node.op, ast.Sub):
+            return left - right
+        if isinstance(node.op, ast.Mult):
+            return left * right
+        if isinstance(node.op, ast.Div):
+            if right == 0:
+                return None
+            return left / right
+        return None
+
+    return None
+
+
+def fraction_slug(value: Fraction) -> str:
+    sign = "neg_" if value < 0 else ""
+    value = abs(value)
+    if value.denominator == 1:
+        return f"{sign}{value.numerator}"
+    return f"{sign}{value.numerator}_over_{value.denominator}"
+
+
+def fraction_yaml_value(value: Fraction) -> int | str:
+    if value.denominator == 1:
+        return int(value.numerator)
+    decimal_value = Decimal(value.numerator) / Decimal(value.denominator)
+    return format(decimal_value.normalize(), "f")
+
+
+def make_unique_entity_name(base: str, reserved: set[str]) -> str:
+    name = base
+    suffix = 2
+    while name in reserved:
+        name = f"{base}_{suffix}"
+        suffix += 1
+    reserved.add(name)
+    return name
+
+
+def unique_input_entity_for_value(
+    value: Fraction,
+    problem_entities: Dict[str, Dict[str, Any]],
+) -> Optional[str]:
+    matches: List[str] = []
+    for name, entity in problem_entities.items():
+        if entity.get("location") != "input":
+            continue
+        entity_value = fraction_from_entity_value(entity.get("value"))
+        if entity_value == value:
+            matches.append(name)
+    return matches[0] if len(matches) == 1 else None
+
+
+def materialize_numeric_literals_in_plan(
+    plan: Dict[str, Any],
+    problem_entities: Dict[str, Dict[str, Any]],
+    *,
+    prefix: str = "student_answer",
+    source_label: str = "student answer",
+) -> Tuple[Dict[str, Any], Dict[str, Dict[str, Any]]]:
+    """
+    Đổi numeric literal trong expr thành entity cục bộ của lời giải.
+
+    ProblemEntities chỉ nên chứa số được cho trong đề. Nếu học sinh/giáo viên
+    viết một hằng số phát sinh trong lời giải như `* 2`, hằng số đó thuộc
+    answer-local context, nên được biểu diễn bằng entity riêng trong
+    StudentAnswerEntities/TeacherAnswerEntities thay vì để literal trong expr.
+    """
+    updated_plan = deepcopy(plan)
+    extra_entities: Dict[str, Dict[str, Any]] = {}
+    reserved = set(problem_entities.keys())
+    for step_name, step in updated_plan.items():
+        if step_name.startswith("step") and isinstance(step, dict):
+            result = normalize_empty(step.get("result"))
+            if result:
+                reserved.add(str(result))
+
+    literal_names_by_value: Dict[Fraction, str] = {}
+
+    def entity_for_literal(value: Fraction, raw_text: str) -> str:
+        existing = unique_input_entity_for_value(value, problem_entities)
+        if existing:
+            return existing
+
+        if value in literal_names_by_value:
+            return literal_names_by_value[value]
+
+        base = f"{prefix}_number_{fraction_slug(value)}"
+        name = make_unique_entity_name(base, reserved)
+        literal_names_by_value[value] = name
+        extra_entities[name] = {
+            "value": fraction_yaml_value(value),
+            "unit": None,
+            "location": "input",
+            "grand_unit": None,
+            "source": f"numeric literal {raw_text} from {source_label}",
+            "source_type": "answer_literal",
+            "expr": None,
+            "formalized_expr": None,
+        }
+        return name
+
+    class NumericLiteralTransformer(ast.NodeTransformer):
+        def replace_if_numeric(self, node: ast.AST) -> ast.AST:
+            value = fraction_from_numeric_ast(node)
+            if value is None:
+                return self.generic_visit(node)
+            raw_text = ast.unparse(node)
+            return ast.copy_location(ast.Name(id=entity_for_literal(value, raw_text), ctx=ast.Load()), node)
+
+        def visit_BinOp(self, node: ast.BinOp) -> ast.AST:  # noqa: N802
+            return self.replace_if_numeric(node)
+
+        def visit_UnaryOp(self, node: ast.UnaryOp) -> ast.AST:  # noqa: N802
+            return self.replace_if_numeric(node)
+
+        def visit_Constant(self, node: ast.Constant) -> ast.AST:  # noqa: N802
+            return self.replace_if_numeric(node)
+
+    for step_name, step in updated_plan.items():
+        if not step_name.startswith("step") or not isinstance(step, dict):
+            continue
+        expr = normalize_empty(step.get("expr"))
+        if expr is None:
+            continue
+        normalized_expr = str(expr).replace("×", "*").replace("÷", "/")
+        try:
+            tree = ast.parse(normalized_expr, mode="eval")
+        except SyntaxError as exc:
+            raise StudentAnswerFormalizerError(f"{step_name}.expr không parse được: {expr!r}") from exc
+
+        transformed_body = NumericLiteralTransformer().visit(tree.body)
+        ast.fix_missing_locations(transformed_body)
+        step["expr"] = ast.unparse(transformed_body)
+
+    return updated_plan, extra_entities
+
+
+# -----------------------------------------------------------------------------
 # StudentAnswerEntities merge
 # -----------------------------------------------------------------------------
 
-def initial_student_entities(problem_entities: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+def initial_student_entities(
+    problem_entities: Dict[str, Dict[str, Any]],
+    extra_entities: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Dict[str, Dict[str, Any]]:
     entities: Dict[str, Dict[str, Any]] = {}
-    for name, entity in problem_entities.items():
+    for name, entity in {**problem_entities, **(extra_entities or {})}.items():
         validate_entity_name(name)
         if not isinstance(entity, dict):
             raise StudentAnswerFormalizerError(f"Entity {name} trong StudentAnswerEntities phải là dictionary.")
@@ -879,6 +1230,11 @@ def initial_student_entities(problem_entities: Dict[str, Dict[str, Any]]) -> Dic
                 if (source := normalize_empty(entity.get("source"))) is not None
                 else {}
             ),
+            **(
+                {"source_type": str(source_type).strip()}
+                if (source_type := normalize_empty(entity.get("source_type"))) is not None
+                else {}
+            ),
             "expr": normalize_empty(entity.get("expr")),
             "formalized_expr": normalize_empty(entity.get("formalized_expr")),
         }
@@ -889,8 +1245,9 @@ def initial_student_entities(problem_entities: Dict[str, Dict[str, Any]]) -> Dic
 def merge_student_plan_into_entities(
     student_plan: Dict[str, Any],
     problem_entities: Dict[str, Dict[str, Any]],
+    extra_entities: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    entities = initial_student_entities(problem_entities)
+    entities = initial_student_entities(problem_entities, extra_entities=extra_entities)
 
     formalized_by_entity: Dict[str, Optional[str]] = {}
     for name, entity in entities.items():
@@ -907,7 +1264,7 @@ def merge_student_plan_into_entities(
         result_unit = normalize_empty(step.get("result_unit"))
         result_grand_unit = normalize_empty(step.get("result_grand_unit"))
         expr = step["expr"]
-        f_expr = formalize_expr(expr, formalized_by_entity)
+        f_expr = formalize_expr(expr, formalized_by_entity) if expr else None
 
         if result not in entities:
             entities[result] = {
@@ -961,6 +1318,8 @@ def run() -> None:
         previous_error: Optional[str] = None
         last_validation_error: Optional[Exception] = None
         student_plan: Optional[Dict[str, Any]] = None
+        answer_literal_entities: Dict[str, Dict[str, Any]] = {}
+        grounding_warnings: List[Dict[str, Any]] = []
         diagnosis: List[Dict[str, Any]] = []
 
         for _ in range(max_retries()):
@@ -978,14 +1337,33 @@ def run() -> None:
                     problem_entities,
                     student_answer=student_answer,
                 )
-                validate_reported_expr_grounded_in_student_answer(candidate_plan, student_answer)
-                validate_reported_exprs_follow_student_answer(candidate_plan, student_answer)
+                candidate_plan, candidate_literal_entities = materialize_numeric_literals_in_plan(
+                    candidate_plan,
+                    problem_entities,
+                    prefix="student_answer",
+                    source_label="StudentAnswer.txt",
+                )
+                candidate_plan = validate_and_normalize_student_plan(
+                    candidate_plan,
+                    {**problem_entities, **candidate_literal_entities},
+                    student_answer=student_answer,
+                )
+                candidate_grounding_warnings = validate_reported_expr_grounded_in_student_answer(
+                    candidate_plan,
+                    student_answer,
+                )
+                validate_reported_exprs_include_explicit_equations(
+                    candidate_plan,
+                    student_answer,
+                )
             except StudentAnswerFormalizerError as exc:
                 previous_error = str(exc)
                 last_validation_error = exc
                 continue
 
             student_plan = candidate_plan
+            answer_literal_entities = candidate_literal_entities
+            grounding_warnings = candidate_grounding_warnings
             diagnosis = normalize_diagnosis(raw_diagnosis)
             break
 
@@ -995,10 +1373,15 @@ def run() -> None:
         write_yaml_file(STUDENT_PLAN_PATH, student_plan)
         write_diagnosis_and_wrong(diagnosis)
 
-        student_entities = merge_student_plan_into_entities(student_plan, problem_entities)
+        student_entities = merge_student_plan_into_entities(
+            student_plan,
+            problem_entities,
+            extra_entities=answer_literal_entities,
+        )
         write_yaml_file(STUDENT_ANSWER_ENTITIES_PATH, student_entities)
 
         write_log("Pass StudentAnswerFormalizer")
+        write_log_items("StudentAnswerFormalizer_grounding_warnings", grounding_warnings)
         print("Pass StudentAnswerFormalizer")
     except Exception as exc:
         write_log("Fail StudentAnswerFormalizer", str(exc))

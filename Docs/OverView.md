@@ -76,6 +76,7 @@ chấm.
 ProblemFormalizer
 StudentAnswerFormalizer
 TeacherAnswerFormalizer
+InsideChecker --mode teacher
 InsideChecker --mode student
 Mapper --reference teacher
 CompareChecker --reference teacher
@@ -282,8 +283,9 @@ Mở rộng hiện tại và mục đích:
   làm mất thông tin học sinh đã suy luận như thế nào.
 - Validate số trong `reported_expr` phải xuất hiện trong bài làm học sinh để LLM
   không tự thêm số hoặc tự sửa phép tính.
-- Extract equation học sinh viết và bắt StudentPlan giữ đúng thứ tự để so sánh
-  được với lời giải thực tế trong file txt.
+- Extract equation bằng regex để đưa vào prompt như hint tham khảo. LLM vẫn đọc
+  toàn bộ file txt và tự quyết định các step; Python không reject chỉ vì regex
+  nhận diện thiếu hoặc khác cách viết của LLM.
 - `expr` vẫn map về entity chuẩn, nhưng `reported_expr` giữ số học sinh dùng sai
   nếu học sinh đọc sai đề. Mục đích là tách quan hệ symbolic khỏi lỗi đọc số.
 - Ghi vào `Output/Diagnosis.yaml`, không dùng spelling sai `Diagonosis.yaml`, để
@@ -302,12 +304,14 @@ Mở rộng hiện tại và mục đích:
   InsideChecker và repair. Mục đích là tránh check trùng và tránh repair hai
   lần trên cùng một plan.
 - `Main/Tutor.py` chạy luồng tự giải và tự chấm:
-  `Solver -> StudentAnswerFormalizer -> Mapper -> CompareChecker`. Mục đích là
-  kiểm tra bài học sinh bằng lời giải do hệ thống tự sinh.
+  `Solver -> StudentAnswerFormalizer -> InsideChecker student -> Mapper ->
+  CompareChecker`. Mục đích là kiểm tra bài học sinh bằng lời giải do hệ thống
+  tự sinh.
 - `Main/Grader.py` chạy phần chấm teacher-vs-student:
   `ProblemFormalizer -> StudentAnswerFormalizer -> TeacherAnswerFormalizer ->
-  Mapper teacher -> CompareChecker teacher`. Mục đích là benchmark verifier dựa
-  trên lời giải giáo viên, không bị lẫn lỗi từ solver.
+  InsideChecker teacher -> InsideChecker student -> Mapper teacher ->
+  CompareChecker teacher`. Mục đích là benchmark verifier dựa trên lời giải giáo
+  viên, không bị lẫn lỗi từ solver.
 - Các stage được chạy bằng subprocess theo thứ tự. Mục đích là mỗi module vẫn có
   thể chạy độc lập, nhưng khi cần thì có pipeline tổng hợp.
 
@@ -329,8 +333,10 @@ Mục tiêu của Mapper là giúp CompareChecker hiểu entity nào của học
 Vai trò theo prompt gốc:
 
 - Check lỗi nội tại của một plan/entities.
-- Có hai mode:
+- Có ba mode:
   - `llm`: đọc `Plan.yaml` và `PlanEntities.yaml`, ghi `Error.yaml`.
+  - `teacher`: đọc `TeacherPlan.yaml` và `TeacherAnswerEntities.yaml`, ghi
+    lỗi vào `Log.yaml` và fail nếu reference giáo viên không nhất quán.
   - `student`: đọc `StudentPlan.yaml` và `StudentAnswerEntities.yaml`, ghi
     `Diagnosis.yaml`.
 

@@ -129,7 +129,7 @@ def normalize_entities(raw_entities: Dict[str, Any], *, file_label: str) -> Dict
         raise MapperError(f"{file_label} đang rỗng.")
 
     required = {"value", "unit", "location", "grand_unit"}
-    optional = {"expr", "formalized_expr", "map", "source"}
+    optional = {"expr", "formalized_expr", "map", "source", "source_type"}
     normalized: Dict[str, Dict[str, Any]] = {}
 
     for name, entity in raw_entities.items():
@@ -157,6 +157,9 @@ def normalize_entities(raw_entities: Dict[str, Any], *, file_label: str) -> Dict
         source = normalize_empty(entity.get("source"))
         if source is not None:
             normalized_entity["source"] = str(source).strip()
+        source_type = normalize_empty(entity.get("source_type"))
+        if source_type is not None:
+            normalized_entity["source_type"] = str(source_type).strip()
 
         normalized[name] = normalized_entity
 

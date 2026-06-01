@@ -128,8 +128,11 @@ Các thay đổi chính:
 - `reported_expr` phải giữ đúng phép tính học sinh viết hoặc ngụ ý trong từng
   dòng, không thay bằng phép tính tương đương.
 - Validate số trong `reported_expr` phải xuất hiện trong bài làm học sinh.
-- Extract các equation học sinh viết và bắt StudentPlan giữ đúng thứ tự, không
-  gộp/bỏ bước.
+- Extract các equation bằng regex để đưa vào prompt như hint tham khảo. Regex
+  không còn là validator exact-match vì text tự nhiên có nhiều cách viết phép
+  tính mà code thuần không thể nhận diện đầy đủ.
+- LLM tự quyết định các step từ toàn bộ bài làm; Python chỉ giữ các invariant
+  khách quan như schema, dependency entity và grounding số.
 - Vẫn map `expr` về entity chuẩn của đề, nhưng `reported_expr` giữ số học sinh
   dùng sai nếu học sinh đọc sai đề.
 - Ghi diagnosis vào `Output/Diagnosis.yaml` và `Wrong.yaml`.
@@ -146,7 +149,8 @@ Các file pipeline này không có trong prompt PDF ban đầu dưới dạng fi
   CompareChecker`.
 - `Main/Grader.py` là pipeline teacher-vs-student riêng:
   `ProblemFormalizer -> StudentAnswerFormalizer -> TeacherAnswerFormalizer ->
-  Mapper --reference teacher -> CompareChecker --reference teacher`.
+  InsideChecker teacher -> InsideChecker student -> Mapper --reference teacher ->
+  CompareChecker --reference teacher`.
 - Full pipeline chấm bằng lời giải giáo viên hiện tại chạy bằng:
   `python3 Main/Grader.py`.
 

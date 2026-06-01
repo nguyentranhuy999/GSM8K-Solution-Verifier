@@ -135,7 +135,11 @@ Quy tắc step:
 - Mỗi dòng/phần có dấu "=" trong lời giải giáo viên phải tạo đúng một step riêng, theo đúng thứ tự xuất hiện.
 - reported_expr phải giữ đúng phép tính giáo viên viết ở dòng đó.
 - expr phải tương ứng với chính reported_expr của step đó.
-- Không tạo bước chỉ copy một entity sang entity khác. Nếu step đã tính ra đáp án cuối, đặt result của step đó là target.
+- expr phải bao phủ toàn bộ vế trái của reported_expr. Ví dụ reported_expr là 30 * 2 + 50 = 110
+  thì expr phải có entity tương ứng cho cả 30, 2 và 50, không được bỏ bớt toán hạng.
+- Không tạo bước chỉ copy một entity sang entity khác.
+- Không tạo reported_expr dạng tautology như 110 = 110. Nếu step đã tính ra đáp án cuối,
+  đặt result của step đó là target.
 
 Quy tắc output:
 - Chỉ trả YAML thuần.
@@ -157,7 +161,7 @@ def build_user_prompt(
         sort_keys=False,
         default_flow_style=False,
     )
-    required_equations = student_formalizer.extract_equations_from_student_answer(teacher_answer)
+    equation_hints = student_formalizer.extract_equations_from_student_answer(teacher_answer)
     retry_note = ""
     if previous_error:
         retry_note = f"""
@@ -165,7 +169,8 @@ def build_user_prompt(
 Output trước bị reject vì lỗi:
 {previous_error}
 
-Hãy sửa bằng cách tạo đủ step cho TẤT CẢ required reported_expr dưới đây, không bỏ dòng nào.
+Hãy sửa lỗi trên. Những equation rõ ràng được liệt kê bên dưới sẽ được code
+validator kiểm tra, nên không được bỏ hoặc gộp vào step khác.
 """.rstrip()
 
     return f"""
@@ -180,8 +185,8 @@ Output/ProblemEntities.yaml:
 Input/TeacherAnswer.txt:
 {teacher_answer}
 
-Required reported_expr theo đúng thứ tự, mỗi dòng là một step riêng:
-{yaml.safe_dump(required_equations, allow_unicode=True, sort_keys=False).strip()}
+Detected explicit equations từ regex:
+{yaml.safe_dump(equation_hints, allow_unicode=True, sort_keys=False).strip()}
 {retry_note}
 """.strip()
 
@@ -293,15 +298,36 @@ def validate_teacher_plan(
     raw_plan: Dict[str, Any],
     problem_entities: Dict[str, Dict[str, Any]],
     teacher_answer: str,
-) -> Dict[str, Any]:
+) -> tuple[Dict[str, Any], Dict[str, Dict[str, Any]], list[Dict[str, Any]]]:
     try:
         plan = student_formalizer.validate_and_normalize_student_plan(
             raw_plan,
             problem_entities,
             student_answer=teacher_answer,
+            plan_label="TeacherPlan",
         )
-        student_formalizer.validate_reported_expr_grounded_in_student_answer(plan, teacher_answer)
-        student_formalizer.validate_reported_exprs_follow_student_answer(plan, teacher_answer)
+        plan, answer_literal_entities = student_formalizer.materialize_numeric_literals_in_plan(
+            plan,
+            problem_entities,
+            prefix="teacher_answer",
+            source_label="TeacherAnswer.txt",
+        )
+        plan = student_formalizer.validate_and_normalize_student_plan(
+            plan,
+            {**problem_entities, **answer_literal_entities},
+            student_answer=teacher_answer,
+            plan_label="TeacherPlan",
+        )
+        grounding_warnings = student_formalizer.validate_reported_expr_grounded_in_student_answer(
+            plan,
+            teacher_answer,
+            answer_label="lời giải giáo viên",
+        )
+        student_formalizer.validate_reported_exprs_include_explicit_equations(
+            plan,
+            teacher_answer,
+            answer_label="lời giải giáo viên",
+        )
     except student_formalizer.StudentAnswerFormalizerError as exc:
         raise TeacherAnswerFormalizerError(str(exc)) from exc
 
@@ -320,7 +346,7 @@ def validate_teacher_plan(
             f"hiện tạo {plan[step_keys[-1]]['result']!r}."
         )
 
-    return plan
+    return plan, answer_literal_entities, grounding_warnings
 
 
 def run() -> None:
@@ -337,6 +363,8 @@ def run() -> None:
         previous_error: Optional[str] = None
         last_validation_error: Optional[Exception] = None
         teacher_plan: Optional[Dict[str, Any]] = None
+        answer_literal_entities: Dict[str, Dict[str, Any]] = {}
+        grounding_warnings: list[Dict[str, Any]] = []
 
         for _ in range(max_retries()):
             raw_response = call_openrouter(
@@ -348,24 +376,35 @@ def run() -> None:
 
             try:
                 raw_teacher_plan = parse_llm_output(raw_response)
-                candidate_plan = validate_teacher_plan(raw_teacher_plan, problem_entities, teacher_answer)
+                candidate_plan, candidate_literal_entities, candidate_grounding_warnings = validate_teacher_plan(
+                    raw_teacher_plan,
+                    problem_entities,
+                    teacher_answer,
+                )
             except TeacherAnswerFormalizerError as exc:
                 previous_error = str(exc)
                 last_validation_error = exc
                 continue
 
             teacher_plan = candidate_plan
+            answer_literal_entities = candidate_literal_entities
+            grounding_warnings = candidate_grounding_warnings
             break
 
         if teacher_plan is None:
             raise TeacherAnswerFormalizerError(str(last_validation_error))
 
-        teacher_entities = student_formalizer.merge_student_plan_into_entities(teacher_plan, problem_entities)
+        teacher_entities = student_formalizer.merge_student_plan_into_entities(
+            teacher_plan,
+            problem_entities,
+            extra_entities=answer_literal_entities,
+        )
 
         write_yaml_file(TEACHER_PLAN_PATH, teacher_plan)
         write_yaml_file(TEACHER_ANSWER_ENTITIES_PATH, teacher_entities)
 
         write_log("Pass TeacherAnswerFormalizer")
+        student_formalizer.write_log_items("TeacherAnswerFormalizer_grounding_warnings", grounding_warnings)
         print("Pass TeacherAnswerFormalizer")
     except Exception as exc:
         write_log("Fail TeacherAnswerFormalizer", str(exc))

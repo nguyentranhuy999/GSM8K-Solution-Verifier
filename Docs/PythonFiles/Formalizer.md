@@ -445,13 +445,13 @@ Code kiểm tra:
 - `result` hợp lệ;
 - `reported_expr` phải có dấu `=`;
 - số trong `reported_expr` phải grounded trong bài học sinh;
-- các equation học sinh viết phải xuất hiện đúng thứ tự, không bị LLM bỏ/gộp.
+- `expr` chỉ dùng entity có sẵn hoặc result của step trước.
 
 Các hàm đáng chú ý:
 
-- `extract_equations_from_student_answer()`: lấy các phép tính trong text học sinh.
+- `extract_equations_from_student_answer()`: lấy các phép tính regex nhận diện
+  được trong text để đưa vào prompt như hint tham khảo.
 - `validate_reported_expr_grounded_in_student_answer()`: chống LLM tự thêm số.
-- `validate_reported_exprs_follow_student_answer()`: chống bỏ/gộp/đảo phép tính.
 - `merge_student_plan_into_entities()`: thêm result entity vào
   `StudentAnswerEntities.yaml`.
 
@@ -468,7 +468,9 @@ Diagnosis được merge, không ghi đè mất lỗi cũ.
 Prompt gốc yêu cầu tạo StudentPlan và cập nhật entities. Code hiện tại siết thêm:
 
 - không cho LLM tự sửa phép tính học sinh;
-- bắt `reported_expr` theo đúng thứ tự trong file txt;
+- yêu cầu LLM đọc toàn bộ file txt và giữ thứ tự suy luận;
+- đưa equation regex vào prompt như hint mềm, không dùng exact-match code thuần
+  để reject output;
 - bắt số trong `reported_expr` phải xuất hiện trong bài học sinh;
 - merge diagnosis thay vì stage sau ghi đè stage trước;
 - chuẩn hóa `Diagnosis.yaml` thay vì typo `Diagonosis.yaml`.

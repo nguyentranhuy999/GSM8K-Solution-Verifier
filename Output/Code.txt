@@ -1,4 +1,0 @@
-notebooks = 30  
-more_pens_than_notebooks = 50  
-pens = notebooks + more_pens_than_notebooks  
-answer = notebooks + pens

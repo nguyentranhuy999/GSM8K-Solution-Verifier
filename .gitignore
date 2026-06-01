@@ -8,8 +8,6 @@ __pycache__/
 *.env
 
 # Benchmark / debug artifacts
-Error/
-ErrorVerify/
-ErrorBaseVerify/
-ErrorCase*/
-Output/BenchmarkOuput/
+Error*/
+Output/
+Input/

@@ -7,9 +7,10 @@ Grader là pipeline riêng với Tutor/Solver:
 1. Formalizer/ProblemFormalizer.py tạo danh sách entity từ đề bài.
 2. Formalizer/StudentAnswerFormalizer.py tạo StudentPlan và hoàn thiện StudentAnswerEntities.
 3. Formalizer/TeacherAnswerFormalizer.py tạo TeacherPlan và hoàn thiện TeacherAnswerEntities.
-4. Verifier/InsideChecker.py --mode student kiểm tra nội bộ lời giải học sinh.
-5. Formalizer/Mapper.py --reference teacher map StudentAnswerEntities với TeacherAnswerEntities.
-6. Verifier/CompareChecker.py --reference teacher so sánh hai nhánh và ghi Diagnosis/Wrong.
+4. Verifier/InsideChecker.py --mode teacher kiểm tra nội bộ lời giải giáo viên.
+5. Verifier/InsideChecker.py --mode student kiểm tra nội bộ lời giải học sinh.
+6. Formalizer/Mapper.py --reference teacher map StudentAnswerEntities với TeacherAnswerEntities.
+7. Verifier/CompareChecker.py --reference teacher so sánh hai nhánh và ghi Diagnosis/Wrong.
 """
 
 from __future__ import annotations
@@ -49,6 +50,15 @@ GRADER_STAGES = [
     Stage(
         name="TeacherAnswerFormalizer",
         command=[sys.executable, str(ROOT_DIR / "Formalizer" / "TeacherAnswerFormalizer.py")],
+    ),
+    Stage(
+        name="InsideCheckerTeacher",
+        command=[
+            sys.executable,
+            str(ROOT_DIR / "Verifier" / "InsideChecker.py"),
+            "--mode",
+            "teacher",
+        ],
     ),
     Stage(
         name="InsideCheckerStudent",

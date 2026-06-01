@@ -250,6 +250,12 @@ def decimal_equal(a: Any, b: Any, tolerance: Decimal = Decimal("0.000001")) -> b
     return abs(da - db) <= tolerance
 
 
+def decimal_expr_text(value: Decimal) -> str:
+    if value == 0:
+        return "0"
+    return format(value.normalize(), "f")
+
+
 def expr_tokens(expr: Optional[str]) -> List[str]:
     if not expr:
         return []
@@ -311,6 +317,7 @@ def normalize_entities(raw_entities: Dict[str, Any]) -> Dict[str, Dict[str, Any]
             "grand_unit": normalize_empty(entity.get("grand_unit")),
             "expr": normalize_empty(entity.get("expr")),
             "formalized_expr": normalize_empty(entity.get("formalized_expr")),
+            "source_type": normalize_empty(entity.get("source_type")),
             "map": normalize_empty(entity.get("map")),
         }
     return entities
@@ -416,10 +423,49 @@ def replace_student_tokens_with_plan_tokens(expr: str, student_entities: Dict[st
 
     def repl(match: re.Match[str]) -> str:
         token = match.group(0)
+        literal_value = answer_literal_expr_value(token, student_entities)
+        if literal_value is not None:
+            return literal_value
         mapped = student_entities.get(token, {}).get("map")
         return mapped or token
 
     return re.sub(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", repl, expr)
+
+
+def is_answer_literal_entity(name: str, entity: Optional[Dict[str, Any]]) -> bool:
+    if not entity:
+        return False
+    if entity.get("source_type") == "answer_literal":
+        return True
+    return name.startswith(("student_answer_number_", "teacher_answer_number_"))
+
+
+def answer_literal_expr_value(token: str, entities: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    entity = entities.get(token)
+    if not is_answer_literal_entity(token, entity):
+        return None
+    value = to_decimal(entity.get("value") if entity else None)
+    if value is None:
+        return None
+    return decimal_expr_text(value)
+
+
+def replace_answer_literals_with_values(expr: Optional[str], entities: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    if not expr:
+        return expr
+
+    def repl(match: re.Match[str]) -> str:
+        token = match.group(0)
+        literal_value = answer_literal_expr_value(token, entities)
+        return literal_value if literal_value is not None else token
+
+    return re.sub(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", repl, str(expr))
+
+
+def expression_uses_answer_literal(expr: Optional[str], entities: Dict[str, Dict[str, Any]]) -> bool:
+    if not expr:
+        return False
+    return any(is_answer_literal_entity(token, entities.get(token)) for token in expr_tokens(expr))
 
 
 def equivalent_by_random_substitution(expr_a: Optional[str], expr_b: Optional[str], *, trials: int = 3) -> bool:
@@ -517,15 +563,20 @@ def check_step_structure_change(
     if not plan_expr or not student_expr:
         return
 
+    plan_expr_for_compare = replace_answer_literals_with_values(plan_expr, plan_entities)
     student_expr_mapped = replace_student_tokens_with_plan_tokens(student_expr, student_entities)
-    if not equivalent_by_random_substitution(plan_expr, student_expr_mapped, trials=3):
+    student_expr_mapped = replace_answer_literals_with_values(student_expr_mapped, plan_entities)
+    if not equivalent_by_random_substitution(plan_expr_for_compare, student_expr_mapped, trials=3):
         return
 
     plan_step_count = count_steps(plan)
     student_step_count = count_steps(student_plan)
 
     if student_step_count < plan_step_count:
-        add_diagnosis(diagnosis, "combine step")
+        if expression_uses_answer_literal(student_expr, student_entities):
+            add_diagnosis(diagnosis, "different calculation", entity=student_target)
+        else:
+            add_diagnosis(diagnosis, "combine step")
     elif student_step_count > plan_step_count:
         add_diagnosis(diagnosis, "step separation")
     elif student_step_count == plan_step_count:
@@ -588,8 +639,10 @@ def check_wrong_relationship(
         if expressions_textually_same(s_expr, p_expr):
             continue
         if s_formalized and p_formalized:
+            p_formalized_for_compare = replace_answer_literals_with_values(p_formalized, plan_entities)
             s_formalized_mapped = replace_student_tokens_with_plan_tokens(s_formalized, student_entities)
-            if equivalent_by_random_substitution(p_formalized, s_formalized_mapped, trials=3):
+            s_formalized_mapped = replace_answer_literals_with_values(s_formalized_mapped, plan_entities)
+            if equivalent_by_random_substitution(p_formalized_for_compare, s_formalized_mapped, trials=3):
                 continue
 
         step = find_student_step_by_expr(student_plan, s_expr) or find_student_step_by_result(student_plan, student_name)
@@ -614,17 +667,28 @@ def check_different_calculation(
     if not plan_expr or not student_expr:
         return
 
+    plan_expr_for_compare = replace_answer_literals_with_values(plan_expr, plan_entities)
     student_expr_mapped = replace_student_tokens_with_plan_tokens(student_expr, student_entities)
+    student_expr_mapped = replace_answer_literals_with_values(student_expr_mapped, plan_entities)
 
-    if expressions_textually_same(plan_expr, student_expr_mapped):
+    if expressions_textually_same(plan_expr_for_compare, student_expr_mapped):
         return
 
     # "đáp án lại đúng": so value target trước.
     if not decimal_equal(plan_target_entity.get("value"), student_target_entity.get("value")):
         return
 
-    if not equivalent_by_random_substitution(plan_expr, student_expr_mapped, trials=3):
-        add_diagnosis(diagnosis, "different calculation", entity=student_target)
+    expressions_equivalent = equivalent_by_random_substitution(
+        plan_expr_for_compare,
+        student_expr_mapped,
+        trials=3,
+    )
+    if expressions_equivalent:
+        if expression_uses_answer_literal(student_expr, student_entities) or expression_uses_answer_literal(plan_expr, plan_entities):
+            add_diagnosis(diagnosis, "different calculation", entity=student_target)
+        return
+
+    add_diagnosis(diagnosis, "different calculation", entity=student_target)
 
 
 # -----------------------------------------------------------------------------
@@ -716,8 +780,9 @@ def run() -> None:
                 check_step_structure_change(plan, student_plan, plan_entities, student_entities, diagnosis)
         else:
             # Vẫn có thể ghi combine/step separation/reverse nếu biểu thức target tương đương,
-            # nhưng không ghi nếu đã wrong relationship vì quan hệ sai thường quan trọng hơn.
-            if not any(item.get("diagnosis") == "wrong relationship" for item in diagnosis):
+            # nhưng không ghi nếu đã wrong relationship hoặc different calculation vì nhãn đó
+            # đã mô tả đúng bản chất khác cách tính.
+            if not any(item.get("diagnosis") in {"wrong relationship", "different calculation"} for item in diagnosis):
                 check_step_structure_change(plan, student_plan, plan_entities, student_entities, diagnosis)
 
         diagnosis = remove_structural_label_if_all_right(diagnosis)

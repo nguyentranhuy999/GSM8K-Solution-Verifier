@@ -3,7 +3,7 @@ Verify/InsideChecker.py
 
 Nhiệm vụ:
 - Kiểm tra lỗi sai nội tại của lời giải qua plan và entities.
-- Có 2 chế độ:
+- Có 3 chế độ:
   1. LLM/reference mode:
      - Input:
        - Output/Plan.yaml
@@ -16,6 +16,12 @@ Nhiệm vụ:
        - Output/StudentAnswerEntities.yaml
      - Output:
        - Output/Diagnosis.yaml
+  3. Teacher mode:
+     - Input:
+       - Output/TeacherPlan.yaml
+       - Output/TeacherAnswerEntities.yaml
+     - Output:
+       - Output/Log.yaml nếu reference giáo viên không nhất quán
 
 Cách chạy:
 - Mặc định check LLM/reference:
@@ -27,10 +33,13 @@ Cách chạy:
 - Check lời giải học sinh:
   python3 Verify/InsideChecker.py --mode student
 
+- Check lời giải giáo viên:
+  python3 Verify/InsideChecker.py --mode teacher
+
 Các lỗi check:
 - wrong target
 - wrong calculation
-- unit missing       # student mode only
+- unit missing       # student/teacher mode
 - only final answer
 - wrong relationship
 - do not convert units
@@ -70,6 +79,8 @@ PLAN_PATH = OUTPUT_DIR / "Plan.yaml"
 PLAN_ENTITIES_PATH = OUTPUT_DIR / "PlanEntities.yaml"
 STUDENT_PLAN_PATH = OUTPUT_DIR / "StudentPlan.yaml"
 STUDENT_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "StudentAnswerEntities.yaml"
+TEACHER_PLAN_PATH = OUTPUT_DIR / "TeacherPlan.yaml"
+TEACHER_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "TeacherAnswerEntities.yaml"
 
 ERROR_PATH = OUTPUT_DIR / "Error.yaml"
 DIAGNOSIS_PATH = OUTPUT_DIR / "Diagnosis.yaml"
@@ -224,6 +235,27 @@ def write_log(status: str, message: str = "") -> None:
     write_yaml_file(LOG_PATH, log_data)
 
 
+def write_teacher_reference_log(errors: List[Dict[str, Any]], fatal_errors: List[Dict[str, Any]]) -> None:
+    ensure_dirs()
+    log_data = read_yaml_file(LOG_PATH, required=False)
+    log_data["InsideChecker_teacher"] = "Fail InsideChecker" if fatal_errors else "Pass InsideChecker"
+
+    if errors:
+        log_data["InsideChecker_teacher_errors"] = errors
+    else:
+        log_data.pop("InsideChecker_teacher_errors", None)
+
+    if fatal_errors:
+        labels = ", ".join(sorted({str(err.get("diagnosis")) for err in fatal_errors if err.get("diagnosis")}))
+        log_data["InsideChecker_teacher_message"] = (
+            f"Teacher reference không hợp lệ: {labels or 'unknown error'}"
+        )
+    else:
+        log_data.pop("InsideChecker_teacher_message", None)
+
+    write_yaml_file(LOG_PATH, log_data)
+
+
 # -----------------------------------------------------------------------------
 # Numeric helpers
 # -----------------------------------------------------------------------------
@@ -247,13 +279,25 @@ def decimal_equal(a: Decimal, b: Decimal, tolerance: Decimal = Decimal("0.000001
 def parse_numbers_from_text(text: str) -> List[Decimal]:
     if text is None:
         return []
-    # Hỗ trợ $3.00, -3.5, 1800, 1,000.25. Không xử lý phân số chữ ở checker này.
-    raw_numbers = re.findall(r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", str(text))
+    # Hỗ trợ $3.00, -3.5, 1800, 1,000.25 và phân số dạng 1/3.
+    number_pattern = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
+    raw_numbers = re.findall(
+        rf"[-+]?{number_pattern}(?:\s*/\s*[-+]?{number_pattern})?",
+        str(text),
+    )
     numbers: List[Decimal] = []
     for raw in raw_numbers:
         try:
-            numbers.append(Decimal(raw.replace(",", "")))
-        except InvalidOperation:
+            normalized = raw.replace(",", "").replace(" ", "")
+            if "/" in normalized:
+                numerator, denominator = normalized.split("/", 1)
+                denominator_value = Decimal(denominator)
+                if denominator_value == 0:
+                    continue
+                numbers.append(Decimal(numerator) / denominator_value)
+            else:
+                numbers.append(Decimal(normalized))
+        except (InvalidOperation, ValueError):
             continue
     return numbers
 
@@ -330,6 +374,10 @@ def eval_ast_node(node: ast.AST, values: Optional[Dict[str, Decimal]] = None) ->
 
 
 def safe_eval_arithmetic(expr: str, values: Optional[Dict[str, Decimal]] = None) -> Decimal:
+    expr = str(expr)
+    expr = expr.replace("×", "*").replace("÷", "/")
+    expr = re.sub(r"[$€£¥]", "", expr)
+    expr = expr.replace(",", "")
     try:
         tree = ast.parse(expr, mode="eval")
     except SyntaxError as exc:
@@ -412,7 +460,7 @@ def normalize_plan(raw_plan: Dict[str, Any], *, mode: str) -> Dict[str, Any]:
         step.setdefault("result_grand_unit", None)
         step.setdefault("reported_expr", None)
 
-    if mode == "student" and "target" not in plan:
+    if mode in {"student", "teacher"} and "target" not in plan:
         # Không raise ngay để check_wrong_target ghi lỗi được.
         plan["target"] = None
 
@@ -454,7 +502,7 @@ def check_wrong_target(plan: Dict[str, Any], entities: Dict[str, Dict[str, Any]]
         if value is None and expr is None:
             add_error(errors, "wrong target", entity=target_name)
 
-    if mode == "student":
+    if mode in {"student", "teacher"}:
         chosen_target = normalize_empty(plan.get("target"))
         if chosen_target is None:
             add_error(errors, "wrong target", entity=None)
@@ -502,7 +550,7 @@ def check_wrong_calculation(plan: Dict[str, Any], errors: List[Dict[str, Any]]) 
 
 
 def check_unit_missing(entities: Dict[str, Dict[str, Any]], errors: List[Dict[str, Any]], *, mode: str) -> None:
-    if mode != "student":
+    if mode not in {"student", "teacher"}:
         return
     for name, entity in entities.items():
         if normalize_empty(entity.get("unit")) == "missing":
@@ -766,6 +814,23 @@ def numbers_match_sequence(expected_values: List[Decimal], reported_numbers: Lis
     return mismatches
 
 
+def symbolic_expr_matches_reported_lhs(
+    expr: str,
+    reported_lhs: str,
+    entities: Dict[str, Dict[str, Any]],
+) -> bool:
+    """
+    Check nhẹ xem symbolic expr và vế trái reported_expr có cùng giá trị không.
+
+    Guard này tránh false positive khi cùng phép tính được viết khác thứ tự
+    hoặc khác dạng phân số, ví dụ `tokens_start * one_third` và `1/3 * 36`.
+    """
+    values = values_for_symbolic_expr(expr, entities)
+    symbolic_value = safe_eval_arithmetic(expr, values)
+    reported_value = safe_eval_arithmetic(reported_lhs)
+    return decimal_equal(symbolic_value, reported_value)
+
+
 def check_misreading_and_logic_error(plan: Dict[str, Any], entities: Dict[str, Dict[str, Any]], errors: List[Dict[str, Any]]) -> None:
     for sname in step_names(plan):
         step = plan[sname]
@@ -778,6 +843,12 @@ def check_misreading_and_logic_error(plan: Dict[str, Any], entities: Dict[str, D
             lhs, _ = split_reported_expr(str(reported_expr))
         except Exception:
             continue
+
+        try:
+            if symbolic_expr_matches_reported_lhs(str(expr), lhs, entities):
+                continue
+        except Exception:
+            pass
 
         expected_values: List[Decimal] = []
         token_names: List[Optional[str]] = []
@@ -907,6 +978,10 @@ def load_inputs(mode: str) -> Tuple[Dict[str, Any], Dict[str, Dict[str, Any]], P
         raw_plan = read_yaml_file(STUDENT_PLAN_PATH, required=True)
         raw_entities = read_yaml_file(STUDENT_ANSWER_ENTITIES_PATH, required=True)
         output_path = DIAGNOSIS_PATH
+    elif mode == "teacher":
+        raw_plan = read_yaml_file(TEACHER_PLAN_PATH, required=True)
+        raw_entities = read_yaml_file(TEACHER_ANSWER_ENTITIES_PATH, required=True)
+        output_path = LOG_PATH
     else:
         raise InsideCheckerError(f"Mode không hợp lệ: {mode}")
 
@@ -936,19 +1011,27 @@ def run_checks(mode: str) -> List[Dict[str, Any]]:
 def write_outputs(mode: str, errors: List[Dict[str, Any]]) -> None:
     if mode == "llm":
         write_yaml_file(ERROR_PATH, errors)
+        update_wrong_file(errors)
+    elif mode == "teacher":
+        # Teacher answer là reference của Grader. Các lỗi semantic ở nhánh này
+        # chỉ được ghi log để debug, không làm pipeline dừng trước CompareChecker.
+        write_teacher_reference_log(errors, fatal_errors=[])
     else:
         append_diagnosis_file(errors)
-
-    update_wrong_file(errors)
+        update_wrong_file(errors)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check internal consistency of plan/entities.")
     parser.add_argument(
         "--mode",
-        choices=["llm", "student"],
+        choices=["llm", "student", "teacher"],
         default="llm",
-        help="llm: check Output/Plan.yaml + Output/PlanEntities.yaml; student: check Output/StudentPlan.yaml + Output/StudentAnswerEntities.yaml",
+        help=(
+            "llm: check Output/Plan.yaml + Output/PlanEntities.yaml; "
+            "student: check Output/StudentPlan.yaml + Output/StudentAnswerEntities.yaml; "
+            "teacher: check Output/TeacherPlan.yaml + Output/TeacherAnswerEntities.yaml"
+        ),
     )
     return parser.parse_args()
 

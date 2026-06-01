@@ -160,6 +160,7 @@ Pipeline hiện tại:
 ProblemFormalizer
 StudentAnswerFormalizer
 TeacherAnswerFormalizer
+InsideChecker --mode teacher
 InsideChecker --mode student
 Mapper --reference teacher
 CompareChecker --reference teacher
@@ -181,6 +182,9 @@ python3 Main/Grader.py
   entity trung gian vào `StudentAnswerEntities.yaml`.
 - `TeacherAnswerFormalizer.py` đọc lời giải giáo viên, tạo `TeacherPlan.yaml`
   và thêm entity trung gian vào `TeacherAnswerEntities.yaml`.
+- `InsideChecker.py --mode teacher` kiểm tra reference giáo viên. Nếu reference
+  formalize sai nội tại, Grader dừng và ghi lỗi vào `Log.yaml`, không coi đó
+  là lỗi học sinh.
 - `Mapper.py --reference teacher` map entity student với entity teacher.
 - `CompareChecker.py --reference teacher` so sánh hai plan/entity sau map.
 

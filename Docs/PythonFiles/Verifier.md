@@ -10,10 +10,11 @@ entities. Đây là phần cố gắng chạy deterministic bằng Python nhiề
 `InsideChecker.py` kiểm tra lỗi nội tại trong một lời giải, tức là chỉ nhìn một
 cặp plan/entities tại một thời điểm.
 
-Có hai mode:
+Có ba mode:
 
 ```bash
 python3 Verifier/InsideChecker.py --mode llm
+python3 Verifier/InsideChecker.py --mode teacher
 python3 Verifier/InsideChecker.py --mode student
 ```
 
@@ -35,6 +36,23 @@ và ghi:
 
 - `Output/Diagnosis.yaml`
 - `Output/Wrong.yaml`
+
+Mode `teacher` đọc:
+
+- `Output/TeacherPlan.yaml`
+- `Output/TeacherAnswerEntities.yaml`
+
+và ghi:
+
+- `Output/Log.yaml`
+
+Nếu mode `teacher` phát hiện lỗi, checker exit fail để `Grader.py` dừng trước
+khi so sánh. Mode này không cập nhật `Wrong.yaml`, vì reference giáo viên sai
+formalization là lỗi pipeline, không phải lỗi học sinh.
+
+Riêng `extra step` trong mode `teacher` được ghi vào `Log.yaml` nhưng không
+làm fail pipeline, vì bước thừa trong lời giải giáo viên không nhất thiết làm
+reference sai.
 
 ### Các Lỗi Được Check
 
@@ -85,6 +103,9 @@ Nó chỉ cho phép arithmetic đơn giản để kiểm tra `reported_expr`.
 ### Ghi Diagnosis Và Wrong
 
 Mode `llm` ghi lỗi vào `Error.yaml` để Executor có thể repair.
+
+Mode `teacher` ghi lỗi vào `Log.yaml` và fail nếu reference giáo viên không
+nhất quán.
 
 Mode `student` append lỗi vào `Diagnosis.yaml`, không xoá lỗi trước đó.
 
@@ -316,4 +337,3 @@ Prompt gốc chỉ yêu cầu một LLMChecker fallback. Code hiện tại cụ 
 - không hạ `Wrong.yaml` từ `Yes` về `No`;
 - debug output riêng `LLMChecker.yaml`;
 - điều kiện review riêng cho `different calculation + Wrong No`.
-

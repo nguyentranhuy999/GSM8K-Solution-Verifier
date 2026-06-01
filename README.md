@@ -171,6 +171,7 @@ Grader chấm dựa trên lời giải giáo viên:
 ProblemFormalizer.py
 StudentAnswerFormalizer.py
 TeacherAnswerFormalizer.py
+InsideChecker.py --mode teacher
 InsideChecker.py --mode student
 Mapper.py --reference teacher
 CompareChecker.py --reference teacher
@@ -305,7 +306,9 @@ Trong benchmark, mở file CSV và xem các cột snapshot YAML của row sai.
 - `ProblemFormalizer` chặn input value tự tính như `49` nếu đề chỉ nói `7` và `seven times`.
 - `Planner` có retry khi plan bị validator reject.
 - `Executor` không được sửa entity gốc từ `ProblemEntities.yaml`; nó chỉ execute/repair plan và entity trung gian.
-- `InsideChecker` dùng cho cả reference mode và student mode.
+- `InsideChecker` dùng cho cả reference mode, teacher mode và student mode.
+- `StudentAnswerFormalizer` và `TeacherAnswerFormalizer` chỉ dùng equation regex
+  như hint mềm cho LLM; Python không exact-match hint với plan để reject output.
 
 ## Các Biến Môi Trường Hữu Ích
 
@@ -329,5 +332,5 @@ Dự án hiện phù hợp cho prototype/research pipeline. Các bước chính 
 - fraction/scalar: `1/3`, `a fourth`, `twice`
 - target giữ `location: target`
 - không sinh số tự tính trong `ProblemEntities.yaml`
-- không gộp step trong `StudentPlan.yaml`
+- equation hint không trở thành exact-match gate của `StudentPlan.yaml`
 - benchmark không bị stale output

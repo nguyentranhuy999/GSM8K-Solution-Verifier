@@ -489,7 +489,7 @@ def classify_error_stage(stdout: str, stderr: str, error: str = "") -> str:
         if f"Fail {stage}" in text:
             return stage
     running = re.findall(
-        r"Running (Tutor|Solver|ProblemFormalizer|TeacherAnswerFormalizer|StudentAnswerFormalizer|InsideCheckerStudent|Mapper|CompareChecker)\.\.\.",
+        r"Running (Tutor|Solver|ProblemFormalizer|TeacherAnswerFormalizer|StudentAnswerFormalizer|InsideCheckerTeacher|InsideCheckerStudent|Mapper|CompareChecker)\.\.\.",
         text,
     )
     if running and "Reason:" in text:

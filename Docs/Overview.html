@@ -316,6 +316,8 @@
           <div class="flow">
             <div class="node green">StudentAnswerFormalizer</div>
             <span class="arrow">-></span>
+            <div class="node rose">InsideChecker teacher</div>
+            <span class="arrow">-></span>
             <div class="node rose">InsideChecker student</div>
             <span class="arrow">-></span>
             <div class="node green">Mapper</div>
@@ -409,7 +411,7 @@
         path: 'Formalizer/StudentAnswerFormalizer.py',
         group: 'Formalizer',
         role: 'Formalize bài học sinh, giữ đúng reported_expr học sinh viết.',
-        details: ['Không sửa phép tính học sinh.', 'Bắt step theo đúng thứ tự equation trong StudentAnswer.txt.']
+        details: ['Không sửa phép tính học sinh.', 'Dùng equation regex làm hint mềm; LLM đọc toàn bộ StudentAnswer.txt để tạo step.']
       },
       {
         path: 'Formalizer/TeacherAnswerFormalizer.py',
@@ -427,7 +429,7 @@
         path: 'Verifier/InsideChecker.py',
         group: 'Verifier',
         role: 'Check lỗi nội tại của một plan/entities.',
-        details: ['Mode llm ghi Error.yaml.', 'Mode student append Diagnosis.yaml và update Wrong.yaml.']
+        details: ['Mode llm ghi Error.yaml; mode teacher ghi Log.yaml.', 'Mode teacher fail nếu reference giáo viên sai; mode student append Diagnosis.yaml và update Wrong.yaml.']
       },
       {
         path: 'Verifier/CompareChecker.py',
