@@ -1,0 +1,20 @@
+mode: review
+llm_called: false
+wrong: 'Yes'
+diagnosis:
+- diagnosis: wrong calculation
+  step: step2
+  entity: second_child_height_in_inches
+relationship_valid: null
+review_decision: skip
+reason: Bỏ qua vì Diagnosis.yaml không phải different calculation hoặc Wrong.yaml
+  không phải No.
+raw_response: ''
+grader_call:
+  called_by_grader: true
+  mode: review
+  reason: Symbolic pipeline passed; review only if different calculation is marked
+    with Wrong=No.
+  failed_stage: null
+  failed_returncode: null
+  llm_called: false

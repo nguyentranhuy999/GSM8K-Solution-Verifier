@@ -17,9 +17,9 @@ Nhiệm vụ:
   - Output/Wrong.yaml
 
 Các lỗi/nhãn:
-- wrong units conversion
 - combine step
 - step separation
+- extra step
 - reverse steps
 - all right
 - wrong relationship
@@ -230,6 +230,142 @@ def add_diagnosis(items: List[Dict[str, Any]], diagnosis: str, step: Optional[st
         items.append(item)
 
 
+CORE_DIAGNOSIS_LABELS = {
+    "misreading",
+    "wrong calculation",
+    "logic error",
+    "wrong target",
+    "wrong relationship",
+    "different calculation",
+    "do not convert units",
+    "unit missing",
+    "wrong units conversion",
+    "wrong unit conversion",
+    "double count",
+    "missing step",
+    "only final answer",
+}
+
+
+COMPARE_CORE_LABELS = {"wrong relationship", "different calculation", "missing step"}
+
+
+def has_core_diagnosis(items: List[Dict[str, Any]]) -> bool:
+    return any(item.get("diagnosis") in CORE_DIAGNOSIS_LABELS for item in items)
+
+
+def has_compare_core_diagnosis(items: List[Dict[str, Any]]) -> bool:
+    return any(item.get("diagnosis") in COMPARE_CORE_LABELS for item in items)
+
+
+def reclassify_answer_literal_misreading_as_missing_step(
+    items: List[Dict[str, Any]],
+    plan_entities: Dict[str, Dict[str, Any]],
+    student_entities: Dict[str, Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """
+    Sau Mapper, answer-literal có thể map sang intermediate của reference.
+
+    Nếu học sinh dùng trực tiếp số intermediate mà không trình bày bước tạo ra
+    nó, lỗi đúng là missing step. Trước Mapper, InsideChecker chỉ thấy đó là số
+    không nằm trực tiếp trong input nên có thể ghi misreading; normalize lại ở
+    đây để tránh biến thiếu bước thành đọc sai dữ kiện.
+    """
+    changed = False
+    normalized_items: List[Dict[str, Any]] = []
+
+    for item in items:
+        current = dict(item)
+        entity_name = normalize_empty(current.get("entity"))
+        student_entity = student_entities.get(str(entity_name)) if entity_name else None
+        mapped_name = normalize_empty(student_entity.get("map")) if student_entity else None
+        plan_entity = plan_entities.get(str(mapped_name)) if mapped_name else None
+
+        if (
+            current.get("diagnosis") == "misreading"
+            and entity_name
+            and student_entity
+            and plan_entity
+            and is_answer_literal_entity(str(entity_name), student_entity)
+            and re.fullmatch(r"step\d+", str(normalize_empty(plan_entity.get("location")) or ""))
+            and decimal_equal(student_entity.get("value"), plan_entity.get("value"))
+        ):
+            current["diagnosis"] = "missing step"
+            changed = True
+
+        normalized_items.append(current)
+
+    return normalized_items, changed
+
+
+def plan_input_value_exists(
+    value: Any,
+    plan_entities: Dict[str, Dict[str, Any]],
+) -> bool:
+    for entity in plan_entities.values():
+        if entity.get("location") != "input":
+            continue
+        if decimal_equal(value, entity.get("value")):
+            return True
+    return False
+
+
+def find_student_step_using_token(student_plan: Dict[str, Any], token: str) -> Optional[str]:
+    for step_name in step_names(student_plan):
+        step = student_plan.get(step_name)
+        if not isinstance(step, dict):
+            continue
+        expr = normalize_empty(step.get("expr"))
+        if token in expr_tokens(expr):
+            return step_name
+    return None
+
+
+def check_unmapped_answer_literal_misreading(
+    plan_entities: Dict[str, Dict[str, Any]],
+    student_entities: Dict[str, Dict[str, Any]],
+    student_plan: Dict[str, Any],
+    diagnosis: List[Dict[str, Any]],
+) -> None:
+    """
+    Gắn misreading sau Mapper, khi đã biết literal đó không phải input/reference
+    intermediate hợp lệ và kết quả cuối thật sự khác reference.
+
+    Rule này thay thế cách cũ trong InsideChecker vốn quá sớm: trước Mapper, một
+    số như 1800 có thể trông như số bịa, nhưng sau Mapper mới biết nó là
+    intermediate bị thiếu bước.
+    """
+    plan_target = first_target_entity(plan_entities)
+    student_target = first_target_entity(student_entities)
+    if not plan_target or not student_target:
+        return
+
+    if decimal_equal(plan_entities[plan_target].get("value"), student_entities[student_target].get("value")):
+        return
+
+    student_target_expr = (
+        normalize_empty(student_entities[student_target].get("formalized_expr"))
+        or normalize_empty(student_entities[student_target].get("expr"))
+    )
+    if not student_target_expr:
+        return
+
+    for token in expr_tokens(str(student_target_expr)):
+        entity = student_entities.get(token)
+        if not is_answer_literal_entity(token, entity):
+            continue
+        if normalize_empty(entity.get("map")):
+            continue
+        if plan_input_value_exists(entity.get("value"), plan_entities):
+            continue
+        add_diagnosis(
+            diagnosis,
+            "misreading",
+            step=find_student_step_using_token(student_plan, token),
+            entity=token,
+        )
+
+
 def to_decimal(value: Any) -> Optional[Decimal]:
     value = normalize_empty(value)
     if value is None:
@@ -272,6 +408,38 @@ def step_names(plan: Dict[str, Any]) -> List[str]:
 
 def count_steps(plan: Dict[str, Any]) -> int:
     return len(step_names(plan))
+
+
+def step_result_order(plan: Dict[str, Any]) -> List[str]:
+    results: List[str] = []
+    for step_name in step_names(plan):
+        step = plan.get(step_name)
+        if isinstance(step, dict) and step.get("result"):
+            results.append(str(step["result"]))
+    return results
+
+
+def mapped_student_step_result_order(
+    student_plan: Dict[str, Any],
+    student_entities: Dict[str, Dict[str, Any]],
+) -> List[str]:
+    results: List[str] = []
+    for step_name in step_names(student_plan):
+        step = student_plan.get(step_name)
+        if not isinstance(step, dict) or not step.get("result"):
+            continue
+        result = str(step["result"])
+        mapped = normalize_empty(student_entities.get(result, {}).get("map"))
+        results.append(str(mapped or result))
+    return results
+
+
+def step_order_matches(
+    plan: Dict[str, Any],
+    student_plan: Dict[str, Any],
+    student_entities: Dict[str, Dict[str, Any]],
+) -> bool:
+    return step_result_order(plan) == mapped_student_step_result_order(student_plan, student_entities)
 
 
 def target_entities(entities: Dict[str, Dict[str, Any]]) -> List[str]:
@@ -416,18 +584,35 @@ def safe_eval_expr(expr: str, values: Dict[str, Decimal]) -> Decimal:
     return eval_ast_node(tree, values)
 
 
-def replace_student_tokens_with_plan_tokens(expr: str, student_entities: Dict[str, Dict[str, Any]]) -> str:
+def parenthesize_expr(expr: str) -> str:
+    expr = str(expr).strip()
+    if expr.startswith("(") and expr.endswith(")"):
+        return expr
+    return f"({expr})"
+
+
+def replace_student_tokens_with_plan_tokens(
+    expr: str,
+    student_entities: Dict[str, Dict[str, Any]],
+    plan_entities: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> str:
     """Đưa formalized_expr của student về namespace của plan bằng trường map."""
     if not expr:
         return expr
 
     def repl(match: re.Match[str]) -> str:
         token = match.group(0)
+        mapped = student_entities.get(token, {}).get("map")
+        if mapped:
+            if plan_entities:
+                mapped_formalized = normalize_empty(plan_entities.get(mapped, {}).get("formalized_expr"))
+                if mapped_formalized:
+                    return parenthesize_expr(str(mapped_formalized))
+            return mapped
         literal_value = answer_literal_expr_value(token, student_entities)
         if literal_value is not None:
             return literal_value
-        mapped = student_entities.get(token, {}).get("map")
-        return mapped or token
+        return token
 
     return re.sub(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", repl, expr)
 
@@ -468,10 +653,294 @@ def expression_uses_answer_literal(expr: Optional[str], entities: Dict[str, Dict
     return any(is_answer_literal_entity(token, entities.get(token)) for token in expr_tokens(expr))
 
 
-def equivalent_by_random_substitution(expr_a: Optional[str], expr_b: Optional[str], *, trials: int = 3) -> bool:
+def comparable_plan_expr(expr: Optional[str], plan_entities: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    return replace_answer_literals_with_values(expr, plan_entities)
+
+
+def comparable_student_expr(
+    expr: Optional[str],
+    student_entities: Dict[str, Dict[str, Any]],
+    plan_entities: Dict[str, Dict[str, Any]],
+) -> Optional[str]:
+    if not expr:
+        return expr
+    mapped = replace_student_tokens_with_plan_tokens(str(expr), student_entities, plan_entities)
+    return replace_answer_literals_with_values(mapped, plan_entities)
+
+
+def expression_token_set(expr: Optional[str]) -> Set[str]:
+    return set(expr_tokens(expr))
+
+
+def extra_step_candidates_with_irrelevant_inputs(
+    plan_entities: Dict[str, Dict[str, Any]],
+    student_entities: Dict[str, Dict[str, Any]],
+) -> List[str]:
+    """
+    Tìm step dư kiểu học sinh tính thêm một đại lượng rồi triệt tiêu nó về sau.
+
+    Dấu hiệu tổng quát: entity trung gian của student không map được sang reference,
+    và formalized_expr của nó dùng một input không xuất hiện trong công thức target
+    reference. Ví dụ tính tổng 5 ngày rồi chia lại cho 5 trước khi nhân 7 ngày.
+    """
+    plan_target = first_target_entity(plan_entities)
+    if not plan_target:
+        return []
+
+    plan_target_expr = comparable_plan_expr(plan_entities[plan_target].get("formalized_expr"), plan_entities)
+    plan_target_tokens = expression_token_set(plan_target_expr)
+    if not plan_target_tokens:
+        return []
+
+    candidates: List[str] = []
+    for student_name, student_entity in student_entities.items():
+        location = normalize_empty(student_entity.get("location"))
+        if not isinstance(location, str) or not re.fullmatch(r"step\d+", location):
+            continue
+        if normalize_empty(student_entity.get("map")):
+            continue
+        if is_answer_literal_entity(student_name, student_entity):
+            continue
+        if has_equivalent_unmapped_plan_step_entity(student_entity, plan_entities, student_entities):
+            continue
+
+        expr = normalize_empty(student_entity.get("formalized_expr")) or normalize_empty(student_entity.get("expr"))
+        comparable_expr = comparable_student_expr(expr, student_entities, plan_entities)
+        candidate_tokens = expression_token_set(comparable_expr)
+        irrelevant_inputs = [
+            token
+            for token in candidate_tokens - plan_target_tokens
+            if token in plan_entities and plan_entities[token].get("location") == "input"
+        ]
+        if irrelevant_inputs:
+            candidates.append(student_name)
+
+    return candidates
+
+
+def same_unit_and_value(student_entity: Dict[str, Any], plan_entity: Dict[str, Any]) -> bool:
+    if normalize_empty(student_entity.get("unit")) != normalize_empty(plan_entity.get("unit")):
+        return False
+    if normalize_empty(student_entity.get("grand_unit")) != normalize_empty(plan_entity.get("grand_unit")):
+        return False
+    return decimal_equal(student_entity.get("value"), plan_entity.get("value"))
+
+
+def has_equivalent_unmapped_plan_step_entity(
+    student_entity: Dict[str, Any],
+    plan_entities: Dict[str, Dict[str, Any]],
+    student_entities: Dict[str, Dict[str, Any]],
+) -> bool:
+    student_expr = normalize_empty(student_entity.get("formalized_expr")) or normalize_empty(student_entity.get("expr"))
+    comparable_student = comparable_student_expr(student_expr, student_entities, plan_entities)
+    if not comparable_student:
+        return False
+
+    for plan_name, plan_entity in plan_entities.items():
+        location = normalize_empty(plan_entity.get("location"))
+        if not isinstance(location, str) or not re.fullmatch(r"step\d+", location):
+            continue
+        if normalize_empty(plan_entity.get("map")):
+            continue
+        if is_answer_literal_entity(plan_name, plan_entity):
+            continue
+        if not same_unit_and_value(student_entity, plan_entity):
+            continue
+
+        plan_expr = normalize_empty(plan_entity.get("formalized_expr")) or normalize_empty(plan_entity.get("expr"))
+        comparable_plan = comparable_plan_expr(plan_expr, plan_entities)
+        if equivalent_by_random_substitution(
+            comparable_plan,
+            comparable_student,
+            trials=3,
+            fixed_values=fixed_context_values(plan_entities),
+        ):
+            return True
+
+    return False
+
+
+def unmapped_student_step_entities(
+    plan_entities: Dict[str, Dict[str, Any]],
+    student_entities: Dict[str, Dict[str, Any]],
+) -> List[str]:
+    candidates: List[str] = []
+    for student_name, student_entity in student_entities.items():
+        location = normalize_empty(student_entity.get("location"))
+        if not isinstance(location, str) or not re.fullmatch(r"step\d+", location):
+            continue
+        if normalize_empty(student_entity.get("map")):
+            continue
+        if is_answer_literal_entity(student_name, student_entity):
+            continue
+        if has_equivalent_unmapped_plan_step_entity(student_entity, plan_entities, student_entities):
+            continue
+        candidates.append(student_name)
+    return candidates
+
+
+def check_missing_step_from_answer_literals(
+    plan_entities: Dict[str, Dict[str, Any]],
+    student_entities: Dict[str, Dict[str, Any]],
+    student_plan: Dict[str, Any],
+    diagnosis: List[Dict[str, Any]],
+) -> None:
+    """
+    Nếu học sinh dùng trực tiếp một số trung gian và Mapper map số đó tới step
+    của reference, nhưng không có step học sinh nào tạo intermediate đó, thì đó
+    là missing step.
+
+    Ví dụ student viết `24000 * 3 = 72000`; teacher có step tạo
+    `beats_in_two_hours = 24000`. Literal 24000 không phải cách tính khác, mà
+    là kết quả trung gian chưa được chứng minh trong lời giải học sinh.
+    """
+    student_step_maps = {
+        normalize_empty(entity.get("map"))
+        for entity in student_entities.values()
+        if isinstance(normalize_empty(entity.get("location")), str)
+        and re.fullmatch(r"step\d+", str(normalize_empty(entity.get("location"))))
+        and not is_answer_literal_entity("", entity)
+    }
+
+    for student_name, student_entity in student_entities.items():
+        if not is_answer_literal_entity(student_name, student_entity):
+            continue
+        mapped_plan_name = normalize_empty(student_entity.get("map"))
+        if not mapped_plan_name or mapped_plan_name not in plan_entities:
+            continue
+
+        plan_entity = plan_entities[mapped_plan_name]
+        plan_location = normalize_empty(plan_entity.get("location"))
+        if not isinstance(plan_location, str) or not re.fullmatch(r"step\d+", plan_location):
+            continue
+        if normalize_empty(plan_entity.get("expr")) is None:
+            continue
+        if mapped_plan_name in student_step_maps:
+            continue
+
+        step = None
+        for step_name in step_names(student_plan):
+            step_data = student_plan[step_name]
+            if not isinstance(step_data, dict):
+                continue
+            if student_name in expr_tokens(normalize_empty(step_data.get("expr"))):
+                step = step_name
+                break
+        add_diagnosis(diagnosis, "missing step", step=step, entity=student_name)
+
+
+def simplify_identity_multiplier(expr: str) -> str:
+    """
+    identity_multiplier là context entity do ProblemFormalizer thêm với value 1.
+    Nó không làm thay đổi quan hệ toán học, nên phải được rút gọn trước khi
+    random substitution. Nếu random hóa entity này như biến thường, các biểu
+    thức tương đương như `x * fraction` và `x / 1 * fraction` sẽ bị coi là khác.
+    """
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except SyntaxError:
+        return expr
+
+    class IdentityMultiplierSimplifier(ast.NodeTransformer):
+        @staticmethod
+        def is_identity(node: ast.AST) -> bool:
+            return isinstance(node, ast.Name) and node.id == "identity_multiplier"
+
+        def visit_BinOp(self, node: ast.BinOp) -> ast.AST:  # noqa: N802
+            node = self.generic_visit(node)
+            if not isinstance(node, ast.BinOp):
+                return node
+            if isinstance(node.op, ast.Mult):
+                if self.is_identity(node.left):
+                    return node.right
+                if self.is_identity(node.right):
+                    return node.left
+            if isinstance(node.op, ast.Div) and self.is_identity(node.right):
+                return node.left
+            return node
+
+    simplified = IdentityMultiplierSimplifier().visit(tree)
+    ast.fix_missing_locations(simplified)
+    return ast.unparse(simplified)
+
+
+FIXED_CONTEXT_TOKENS = {"identity_multiplier", "host_count", "percentage_scale", "split_count"}
+FIXED_INPUT_HINTS = {
+    "double",
+    "fraction",
+    "half",
+    "multiplier",
+    "per",
+    "percent",
+    "percentage",
+    "quarter",
+    "rate",
+    "ratio",
+    "scale",
+    "third",
+    "times",
+}
+
+
+def decimal_is_integer(value: Decimal) -> bool:
+    return value == value.to_integral_value()
+
+
+def is_fixed_input_constant(name: str, entity: Dict[str, Any]) -> bool:
+    """
+    Một số input trong đề là hệ số cố định, không phải đại lượng cần giữ symbolic.
+
+    Ví dụ cùng một quan hệ có thể được viết là `x / 3` hoặc `x * one_third`.
+    Nếu random-substitute `one_third` như biến tự do, CompareChecker sẽ tưởng
+    hai biểu thức khác quan hệ. Ta chỉ fix các input không có unit và có dấu hiệu
+    là scale/rate/ratio/multiplier để tránh che lỗi dùng nhầm đại lượng có unit.
+    """
+    if normalize_empty(entity.get("location")) != "input":
+        return False
+    if normalize_empty(entity.get("unit")) is not None or normalize_empty(entity.get("grand_unit")) is not None:
+        return False
+
+    value = to_decimal(entity.get("value"))
+    if value is None:
+        return False
+    if not decimal_is_integer(value):
+        return True
+
+    text = f"{name} {entity.get('source') or ''}".lower()
+    return any(hint in text for hint in FIXED_INPUT_HINTS)
+
+
+def fixed_context_values(entities: Dict[str, Dict[str, Any]]) -> Dict[str, Decimal]:
+    values: Dict[str, Decimal] = {}
+    for name in FIXED_CONTEXT_TOKENS:
+        if name not in entities:
+            continue
+        value = to_decimal(entities[name].get("value"))
+        if value is not None:
+            values[name] = value
+    for name, entity in entities.items():
+        if name in values:
+            continue
+        if is_fixed_input_constant(name, entity):
+            value = to_decimal(entity.get("value"))
+            if value is not None:
+                values[name] = value
+    return values
+
+
+def equivalent_by_random_substitution(
+    expr_a: Optional[str],
+    expr_b: Optional[str],
+    *,
+    trials: int = 3,
+    fixed_values: Optional[Dict[str, Decimal]] = None,
+) -> bool:
     if not expr_a or not expr_b:
         return False
 
+    fixed_values = fixed_values or {}
+    expr_a = simplify_identity_multiplier(expr_a)
+    expr_b = simplify_identity_multiplier(expr_b)
     tokens = sorted(set(expr_tokens(expr_a)) | set(expr_tokens(expr_b)))
     if not tokens:
         try:
@@ -481,7 +950,10 @@ def equivalent_by_random_substitution(expr_a: Optional[str], expr_b: Optional[st
 
     rng = random.Random(20260521)
     for _ in range(trials):
-        values = {token: Decimal(rng.randint(2, 20)) for token in tokens}
+        values = {
+            token: fixed_values.get(token, Decimal(rng.randint(2, 20)))
+            for token in tokens
+        }
         try:
             value_a = safe_eval_expr(expr_a, values)
             value_b = safe_eval_expr(expr_b, values)
@@ -491,6 +963,31 @@ def equivalent_by_random_substitution(expr_a: Optional[str], expr_b: Optional[st
             return False
 
     return True
+
+
+def equivalent_under_entity_values(
+    expr_a: Optional[str],
+    expr_b: Optional[str],
+    entities: Dict[str, Dict[str, Any]],
+) -> bool:
+    if not expr_a or not expr_b:
+        return False
+
+    tokens = sorted(set(expr_tokens(expr_a)) | set(expr_tokens(expr_b)))
+    values: Dict[str, Decimal] = {}
+    for token in tokens:
+        entity = entities.get(token)
+        if not entity:
+            return False
+        value = to_decimal(entity.get("value"))
+        if value is None:
+            return False
+        values[token] = value
+
+    try:
+        return decimal_equal(safe_eval_expr(expr_a, values), safe_eval_expr(expr_b, values))
+    except Exception:
+        return False
 
 
 def expressions_textually_same(expr_a: Any, expr_b: Any) -> bool:
@@ -527,25 +1024,6 @@ def find_student_step_by_expr(student_plan: Dict[str, Any], expr: Optional[str])
 # Checks
 # -----------------------------------------------------------------------------
 
-def check_wrong_units_conversion(
-    plan_entities: Dict[str, Dict[str, Any]],
-    student_entities: Dict[str, Dict[str, Any]],
-    diagnosis: List[Dict[str, Any]],
-) -> None:
-    for student_name, student_entity in student_entities.items():
-        mapped_plan_name = normalize_empty(student_entity.get("map"))
-        if not mapped_plan_name or mapped_plan_name not in plan_entities:
-            continue
-
-        plan_entity = plan_entities[mapped_plan_name]
-        if decimal_equal(student_entity.get("value"), plan_entity.get("value")):
-            continue
-
-        # Chỉ coi là wrong units conversion nếu entity thuộc nhóm đơn vị cần đổi.
-        if is_convertible_metadata(student_entity) or is_convertible_metadata(plan_entity):
-            add_diagnosis(diagnosis, "wrong units conversion", step=student_entity.get("location"), entity=student_name)
-
-
 def check_step_structure_change(
     plan: Dict[str, Any],
     student_plan: Dict[str, Any],
@@ -564,13 +1042,26 @@ def check_step_structure_change(
         return
 
     plan_expr_for_compare = replace_answer_literals_with_values(plan_expr, plan_entities)
-    student_expr_mapped = replace_student_tokens_with_plan_tokens(student_expr, student_entities)
+    student_expr_mapped = replace_student_tokens_with_plan_tokens(student_expr, student_entities, plan_entities)
     student_expr_mapped = replace_answer_literals_with_values(student_expr_mapped, plan_entities)
-    if not equivalent_by_random_substitution(plan_expr_for_compare, student_expr_mapped, trials=3):
+    if not equivalent_by_random_substitution(
+        plan_expr_for_compare,
+        student_expr_mapped,
+        trials=3,
+        fixed_values=fixed_context_values(plan_entities),
+    ):
         return
 
     plan_step_count = count_steps(plan)
     student_step_count = count_steps(student_plan)
+    extra_candidates = extra_step_candidates_with_irrelevant_inputs(plan_entities, student_entities)
+    if not extra_candidates and student_step_count == plan_step_count:
+        extra_candidates = unmapped_student_step_entities(plan_entities, student_entities)
+    if extra_candidates:
+        for entity_name in extra_candidates:
+            step = find_student_step_by_result(student_plan, entity_name)
+            add_diagnosis(diagnosis, "extra step", step=step, entity=entity_name)
+        return
 
     if student_step_count < plan_step_count:
         if expression_uses_answer_literal(student_expr, student_entities):
@@ -587,6 +1078,8 @@ def check_step_structure_change(
 
 
 def check_all_right(
+    plan: Dict[str, Any],
+    student_plan: Dict[str, Any],
     plan_entities: Dict[str, Dict[str, Any]],
     student_entities: Dict[str, Dict[str, Any]],
     diagnosis: List[Dict[str, Any]],
@@ -594,6 +1087,9 @@ def check_all_right(
     """
     True nếu toàn bộ entity đã map có map/value/unit/expr khớp nhau và không có entity student chưa map.
     """
+    if not step_order_matches(plan, student_plan, student_entities):
+        return False
+
     for student_name, student_entity in student_entities.items():
         mapped_plan_name = normalize_empty(student_entity.get("map"))
         if not mapped_plan_name or mapped_plan_name not in plan_entities:
@@ -610,7 +1106,30 @@ def check_all_right(
             return False
         if normalize_empty(student_entity.get("unit")) != normalize_empty(plan_entity.get("unit")):
             return False
-        if not expressions_textually_same(student_entity.get("expr"), plan_entity.get("expr")):
+
+        student_expr = normalize_empty(student_entity.get("expr"))
+        plan_expr = normalize_empty(plan_entity.get("expr"))
+        if expressions_textually_same(student_expr, plan_expr):
+            continue
+
+        student_formalized = normalize_empty(student_entity.get("formalized_expr"))
+        plan_formalized = normalize_empty(plan_entity.get("formalized_expr"))
+        if not student_formalized or not plan_formalized:
+            return False
+
+        plan_formalized_for_compare = replace_answer_literals_with_values(plan_formalized, plan_entities)
+        student_formalized_mapped = replace_student_tokens_with_plan_tokens(
+            student_formalized,
+            student_entities,
+            plan_entities,
+        )
+        student_formalized_mapped = replace_answer_literals_with_values(student_formalized_mapped, plan_entities)
+        if not equivalent_by_random_substitution(
+            plan_formalized_for_compare,
+            student_formalized_mapped,
+            trials=3,
+            fixed_values=fixed_context_values(plan_entities),
+        ):
             return False
 
     add_diagnosis(diagnosis, "all right")
@@ -634,15 +1153,28 @@ def check_wrong_relationship(
         s_formalized = normalize_empty(student_entity.get("formalized_expr"))
         p_formalized = normalize_empty(plan_entity.get("formalized_expr"))
 
-        if s_expr is None and p_expr is None:
+        # Không có quan hệ từ phía học sinh là missing step, không phải quan hệ sai.
+        # InsideChecker chịu trách nhiệm ghi nhãn thiếu bước.
+        if s_expr is None:
             continue
         if expressions_textually_same(s_expr, p_expr):
             continue
         if s_formalized and p_formalized:
             p_formalized_for_compare = replace_answer_literals_with_values(p_formalized, plan_entities)
-            s_formalized_mapped = replace_student_tokens_with_plan_tokens(s_formalized, student_entities)
+            s_formalized_mapped = replace_student_tokens_with_plan_tokens(s_formalized, student_entities, plan_entities)
             s_formalized_mapped = replace_answer_literals_with_values(s_formalized_mapped, plan_entities)
-            if equivalent_by_random_substitution(p_formalized_for_compare, s_formalized_mapped, trials=3):
+            if equivalent_by_random_substitution(
+                p_formalized_for_compare,
+                s_formalized_mapped,
+                trials=3,
+                fixed_values=fixed_context_values(plan_entities),
+            ):
+                continue
+            if same_unit_and_value(student_entity, plan_entity) and equivalent_under_entity_values(
+                p_formalized_for_compare,
+                s_formalized_mapped,
+                plan_entities,
+            ):
                 continue
 
         step = find_student_step_by_expr(student_plan, s_expr) or find_student_step_by_result(student_plan, student_name)
@@ -668,7 +1200,7 @@ def check_different_calculation(
         return
 
     plan_expr_for_compare = replace_answer_literals_with_values(plan_expr, plan_entities)
-    student_expr_mapped = replace_student_tokens_with_plan_tokens(student_expr, student_entities)
+    student_expr_mapped = replace_student_tokens_with_plan_tokens(student_expr, student_entities, plan_entities)
     student_expr_mapped = replace_answer_literals_with_values(student_expr_mapped, plan_entities)
 
     if expressions_textually_same(plan_expr_for_compare, student_expr_mapped):
@@ -682,10 +1214,9 @@ def check_different_calculation(
         plan_expr_for_compare,
         student_expr_mapped,
         trials=3,
+        fixed_values=fixed_context_values(plan_entities),
     )
     if expressions_equivalent:
-        if expression_uses_answer_literal(student_expr, student_entities) or expression_uses_answer_literal(plan_expr, plan_entities):
-            add_diagnosis(diagnosis, "different calculation", entity=student_target)
         return
 
     add_diagnosis(diagnosis, "different calculation", entity=student_target)
@@ -697,7 +1228,7 @@ def check_different_calculation(
 
 def remove_structural_label_if_all_right(diagnosis: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Nếu all right tồn tại, bỏ reverse steps/combine/step separation để tránh mâu thuẫn.
+    Nếu all right tồn tại, bỏ reverse steps/combine/step separation/extra step để tránh mâu thuẫn.
     Vì yêu cầu all right là trường hợp hoàn toàn khớp.
     """
     has_all_right = any(item.get("diagnosis") == "all right" for item in diagnosis)
@@ -705,7 +1236,7 @@ def remove_structural_label_if_all_right(diagnosis: List[Dict[str, Any]]) -> Lis
         return diagnosis
     return [
         item for item in diagnosis
-        if item.get("diagnosis") not in {"reverse steps", "combine step", "step separation"}
+        if item.get("diagnosis") not in {"reverse steps", "combine step", "step separation", "extra step"}
     ]
 
 
@@ -721,9 +1252,25 @@ def write_wrong_value(value: str) -> None:
     WRONG_PATH.write_text(f"{value}\n", encoding="utf-8")
 
 
+WRONG_CAUSING_LABELS = {
+    "do not convert units",
+    "logic error",
+    "misreading",
+    "missing step",
+    "only final answer",
+    "unit missing",
+    "wrong calculation",
+    "wrong relationship",
+    "wrong target",
+    "wrong unit conversion",
+    "wrong units conversion",
+}
+
+
 def update_wrong_file(diagnosis: List[Dict[str, Any]]) -> None:
-    has_wrong_relationship = any(item.get("diagnosis") == "wrong relationship" for item in diagnosis)
-    write_wrong_value("Yes" if has_wrong_relationship else "No")
+    all_items = read_diagnosis_file() + diagnosis
+    has_wrong = any(item.get("diagnosis") in WRONG_CAUSING_LABELS for item in all_items)
+    write_wrong_value("Yes" if has_wrong else "No")
 
 
 # -----------------------------------------------------------------------------
@@ -761,28 +1308,42 @@ def run() -> None:
         student_plan = normalize_plan(read_yaml_file(STUDENT_PLAN_PATH, required=True))
         student_entities = normalize_entities(read_yaml_file(STUDENT_ANSWER_ENTITIES_PATH, required=True))
 
+        existing_diagnosis = read_diagnosis_file()
+        existing_diagnosis, diagnosis_reclassified = reclassify_answer_literal_misreading_as_missing_step(
+            existing_diagnosis,
+            plan_entities,
+            student_entities,
+        )
+        if diagnosis_reclassified:
+            write_yaml_file(DIAGNOSIS_PATH, existing_diagnosis)
+
         diagnosis: List[Dict[str, Any]] = []
+        check_unmapped_answer_literal_misreading(
+            plan_entities,
+            student_entities,
+            student_plan,
+            diagnosis,
+        )
 
-        # Các lỗi thực sự trước.
-        check_wrong_units_conversion(plan_entities, student_entities, diagnosis)
-        check_wrong_relationship(plan_entities, student_entities, student_plan, diagnosis)
-        check_different_calculation(plan_entities, student_entities, diagnosis)
+        existing_has_core_error = has_core_diagnosis(existing_diagnosis + diagnosis)
 
-        # Nếu không có lỗi quan hệ/sai đổi đơn vị/cách khác, mới xét all right hoặc cấu trúc bước.
-        has_core_error = any(
-            item.get("diagnosis") in {"wrong units conversion", "wrong relationship", "different calculation"}
-            for item in diagnosis
+        # Nếu InsideChecker đã bắt lỗi gốc, không diff graph nữa. Graph sau lỗi
+        # gốc thường chỉ phản ánh propagation, không phải lỗi học sinh mới.
+        if not existing_has_core_error:
+            check_missing_step_from_answer_literals(plan_entities, student_entities, student_plan, diagnosis)
+            if not has_compare_core_diagnosis(diagnosis):
+                check_wrong_relationship(plan_entities, student_entities, student_plan, diagnosis)
+                check_different_calculation(plan_entities, student_entities, diagnosis)
+
+        # Nếu InsideChecker đã bắt lỗi semantic như misreading/wrong calculation,
+        # không thêm nhãn structural như reverse steps dựa trên biểu thức symbolic.
+        has_core_error = existing_has_core_error or any(
+            item.get("diagnosis") in COMPARE_CORE_LABELS for item in diagnosis
         )
 
         if not has_core_error:
-            all_right = check_all_right(plan_entities, student_entities, diagnosis)
+            all_right = check_all_right(plan, student_plan, plan_entities, student_entities, diagnosis)
             if not all_right:
-                check_step_structure_change(plan, student_plan, plan_entities, student_entities, diagnosis)
-        else:
-            # Vẫn có thể ghi combine/step separation/reverse nếu biểu thức target tương đương,
-            # nhưng không ghi nếu đã wrong relationship hoặc different calculation vì nhãn đó
-            # đã mô tả đúng bản chất khác cách tính.
-            if not any(item.get("diagnosis") in {"wrong relationship", "different calculation"} for item in diagnosis):
                 check_step_structure_change(plan, student_plan, plan_entities, student_entities, diagnosis)
 
         diagnosis = remove_structural_label_if_all_right(diagnosis)

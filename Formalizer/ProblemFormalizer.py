@@ -291,6 +291,9 @@ Nhiệm vụ của bạn:
     Không đặt target là total_books_needed nếu đề hỏi số sách cũ phải đọc lại.
     Ví dụ câu hỏi "How many friends can she invite?" thì target phải là số friends, như total_friends.
     Không đặt target là total_cost nếu đề hỏi số bạn được mời.
+    Không thêm mốc trung gian không có trong câu hỏi vào tên target.
+    Ví dụ câu hỏi "How many gold bars does he have left?" thì có thể dùng gold_bars_left hoặc remaining_gold_bars.
+    Không dùng remaining_gold_after_tax nếu đề còn một bước divorce sau tax và câu hỏi không hỏi "after tax".
 15. Mỗi entity phải có source là phrase/clause gốc trong đề bài làm bằng chứng cho value/target.
     - Với input, source phải là đoạn ngắn trong đề có chứa số hoặc chữ số tương ứng.
     - Với target, source là câu hỏi hoặc phrase hỏi đại lượng cần tìm.
@@ -1422,6 +1425,117 @@ def validate_values_are_direct(problem: str, entities: Dict[str, Dict[str, Any]]
         )
 
 
+def input_value_allowed_by_problem(problem: str, value: float | int) -> bool:
+    direct_values = extract_direct_numeric_values(problem)
+    direct_unit_values = [
+        original
+        for original, _, _ in extract_direct_unit_mentions(problem)
+    ]
+    if any(numbers_equal(value, direct_value) for direct_value in direct_values):
+        return True
+    if any(numbers_equal(value, unit_value) for unit_value in direct_unit_values):
+        return True
+    if any(
+        0 < float(direct_value) < 1 and numbers_equal(float(value), 1 - float(direct_value))
+        for direct_value in direct_values
+    ):
+        return True
+    return False
+
+
+def drop_non_direct_input_values(
+    problem: str,
+    entities: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Xóa input entity mà LLM tự tính ra thay vì fail toàn bộ formalizer.
+
+    ProblemEntities chỉ nên chứa dữ kiện trực tiếp. Nếu LLM lỡ thêm
+    `seven_dozens: 84`, ta bỏ entity đó để downstream tự tạo bước tính từ `7`
+    và `12` nếu lời giải có dùng.
+    """
+    cleaned: Dict[str, Dict[str, Any]] = {}
+    for entity_name, entity in entities.items():
+        if entity.get("location") != "input" or entity_name.startswith("unit_conversion_"):
+            cleaned[entity_name] = entity
+            continue
+        value = entity.get("value")
+        if value is None or input_value_allowed_by_problem(problem, value):
+            cleaned[entity_name] = entity
+    return cleaned
+
+
+def number_slug(value: float | int) -> str:
+    text = format_number_for_error(value).replace("-", "minus_").replace(".", "_")
+    text = re.sub(r"[^a-zA-Z0-9_]+", "_", text).strip("_")
+    return text or "value"
+
+
+def unique_entity_name(base: str, reserved: set[str]) -> str:
+    name = base
+    suffix = 2
+    while name in reserved:
+        name = f"{base}_{suffix}"
+        suffix += 1
+    reserved.add(name)
+    return name
+
+
+def source_clause_for_value(problem: str, value: float | int) -> str:
+    clauses = [
+        clause.strip()
+        for clause in re.split(r"(?<=[.!?;])\s+|,\s+", problem)
+        if clause.strip()
+    ]
+    for clause in clauses:
+        if any(numbers_equal(value, candidate) for candidate in extract_direct_numeric_values(clause)):
+            return clause
+    return format_number_for_error(value)
+
+
+def add_missing_required_input_values(
+    problem: str,
+    entities: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Backfill các số bắt buộc bị LLM bỏ sót bằng entity generic.
+
+    Đây không phải tính trung gian: giá trị vẫn phải xuất hiện trực tiếp trong
+    đề qua digit, number word, fraction word, percent hoặc multiplier word.
+    """
+    enriched = dict(entities)
+    input_values = [
+        entity["value"]
+        for entity in enriched.values()
+        if entity.get("location") == "input"
+    ]
+    required_values = (
+        extract_required_unit_numeric_values(problem)
+        + extract_required_word_unit_numeric_values(problem)
+        + extract_required_scalar_values(problem)
+    )
+    reserved = set(enriched)
+
+    for required_value in required_values:
+        if any(numbers_equal(input_value, required_value) for input_value in input_values):
+            continue
+        if not input_value_allowed_by_problem(problem, required_value):
+            continue
+
+        name = unique_entity_name(f"problem_number_{number_slug(required_value)}", reserved)
+        value: float | int = int(required_value) if float(required_value).is_integer() else required_value
+        enriched[name] = {
+            "value": value,
+            "unit": None,
+            "location": "input",
+            "grand_unit": None,
+            "source": source_clause_for_value(problem, required_value),
+        }
+        input_values.append(value)
+
+    return enriched
+
+
 def target_entity_name(entities: Dict[str, Dict[str, Any]]) -> str:
     targets = [name for name, entity in entities.items() if entity.get("location") == "target"]
     if len(targets) != 1:
@@ -1429,9 +1543,43 @@ def target_entity_name(entities: Dict[str, Dict[str, Any]]) -> str:
     return targets[0]
 
 
+TARGET_SCOPE_MARKERS = {
+    "after": {"after", "later", "following"},
+    "before": {"before", "earlier", "prior"},
+    "during": {"during", "while"},
+    "initial": {"initial", "initially", "starting", "start", "original", "originally", "beginning"},
+}
+
+
+def target_question_text(problem: str, target_entity: Dict[str, Any]) -> str:
+    questions = re.findall(r"[^?.!]*\?", problem)
+    if questions:
+        return questions[-1].lower()
+    return str(normalize_empty(target_entity.get("source")) or "").lower()
+
+
+def validate_target_scope_matches_question(target_name: str, question: str) -> None:
+    target_tokens = set(target_name.split("_"))
+    question_tokens = set(re.findall(r"[a-z]+", question))
+
+    unsupported_markers = [
+        marker
+        for marker, aliases in TARGET_SCOPE_MARKERS.items()
+        if marker in target_tokens and not (aliases & question_tokens)
+    ]
+    if unsupported_markers:
+        raise ProblemFormalizerError(
+            f"Target {target_name!r} tự thêm mốc/phạm vi trung gian {unsupported_markers} "
+            f"không có trong câu hỏi {question!r}. Hãy đặt target theo đúng đại lượng được hỏi cuối cùng, "
+            "không đặt theo một trạng thái trung gian trong diễn biến đề."
+        )
+
+
 def validate_target_name_matches_question(problem: str, entities: Dict[str, Dict[str, Any]]) -> None:
     text = problem.lower()
     target_name = target_entity_name(entities)
+    question = target_question_text(problem, entities[target_name])
+    validate_target_scope_matches_question(target_name, question)
 
     required_terms: list[str] = []
     if re.search(r"\breread\b", text):
@@ -1650,6 +1798,8 @@ def run() -> None:
                 candidate_entities = repair_converted_input_values(problem, candidate_entities)
                 candidate_entities = drop_computed_complement_scalars(problem, candidate_entities)
                 candidate_entities = drop_unknown_zero_placeholders(problem, candidate_entities)
+                candidate_entities = drop_non_direct_input_values(problem, candidate_entities)
+                candidate_entities = add_missing_required_input_values(problem, candidate_entities)
                 validate_values_are_direct(problem, candidate_entities)
                 validate_target_name_matches_question(problem, candidate_entities)
                 validate_multiplicative_relationship_names(problem, candidate_entities)

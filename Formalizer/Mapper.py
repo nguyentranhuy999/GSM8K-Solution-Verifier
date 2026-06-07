@@ -38,6 +38,7 @@ import re
 import sys
 from collections import Counter
 from copy import deepcopy
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -172,6 +173,56 @@ def expr_tokens(expr: Optional[str]) -> List[str]:
     return re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", expr)
 
 
+def to_decimal(value: Any) -> Optional[Decimal]:
+    value = normalize_empty(value)
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return Decimal(str(value).replace(",", ""))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def decimal_expr_text(value: Decimal) -> str:
+    if value == 0:
+        return "0"
+    return format(value.normalize(), "f")
+
+
+def decimal_equal(a: Decimal, b: Decimal, tolerance: Decimal = Decimal("0.000001")) -> bool:
+    return abs(a - b) <= tolerance
+
+
+def is_answer_literal_entity(name: str, entity: Optional[Dict[str, Any]]) -> bool:
+    if not entity:
+        return False
+    if entity.get("source_type") == "answer_literal":
+        return True
+    return name.startswith(("student_answer_number_", "teacher_answer_number_"))
+
+
+def answer_literal_expr_value(token: str, entities: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    entity = entities.get(token)
+    if not is_answer_literal_entity(token, entity):
+        return None
+    value = to_decimal(entity.get("value") if entity else None)
+    if value is None:
+        return None
+    return decimal_expr_text(value)
+
+
+def replace_answer_literals_with_values(expr: str, entities: Dict[str, Dict[str, Any]]) -> str:
+    if not expr:
+        return expr
+
+    def repl(match: re.Match[str]) -> str:
+        token = match.group(0)
+        literal_value = answer_literal_expr_value(token, entities)
+        return literal_value if literal_value is not None else token
+
+    return re.sub(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", repl, expr)
+
+
 def first_target_index(entities: Dict[str, Dict[str, Any]]) -> Optional[int]:
     for idx, (_, entity) in enumerate(entities.items()):
         if entity.get("location") == "target":
@@ -299,12 +350,15 @@ def canonical_expr(expr: Optional[str]) -> Optional[Any]:
 def expression_signature(
     expr: Optional[str],
     *,
+    entities: Optional[Dict[str, Dict[str, Any]]] = None,
     student_to_plan: Optional[Dict[str, str]] = None,
 ) -> Optional[Any]:
     if not expr:
         return None
     if student_to_plan:
         expr = replace_names_by_map(expr, student_to_plan)
+    if entities:
+        expr = replace_answer_literals_with_values(expr, entities)
     return canonical_expr(expr)
 
 
@@ -312,13 +366,14 @@ def entity_signature_candidates(
     name: str,
     entity: Dict[str, Any],
     *,
+    entities: Dict[str, Dict[str, Any]],
     student_to_plan: Optional[Dict[str, str]] = None,
 ) -> List[Any]:
     """Sinh các signature có thể dùng để map entity."""
     candidates: List[Any] = []
 
     for key in ("formalized_expr", "expr"):
-        sig = expression_signature(entity.get(key), student_to_plan=student_to_plan)
+        sig = expression_signature(entity.get(key), entities=entities, student_to_plan=student_to_plan)
         if sig is not None and sig not in candidates:
             candidates.append(sig)
 
@@ -364,7 +419,7 @@ def build_plan_signature_index(
         if is_input_or_target(plan_entity):
             # Input/target đã được xử lý ở auto-map prefix.
             continue
-        for sig in entity_signature_candidates(plan_name, plan_entity):
+        for sig in entity_signature_candidates(plan_name, plan_entity, entities=plan_entities):
             index.setdefault(sig, []).append(plan_name)
     return index
 
@@ -394,6 +449,108 @@ def map_by_same_result_name(
     return changed
 
 
+def map_answer_literals_by_value(
+    plan_entities: Dict[str, Dict[str, Any]],
+    student_entities: Dict[str, Dict[str, Any]],
+    student_to_plan: Dict[str, str],
+    plan_to_student: Dict[str, str],
+) -> bool:
+    """
+    Map literal trong lời giải student sang entity trung gian của reference nếu
+    đó là entity duy nhất có cùng value. Trường hợp điển hình: student viết trực
+    tiếp "2 hours per day", còn teacher có step `hours / days = 2`.
+    """
+    changed = False
+    for student_name, student_entity in student_entities.items():
+        if student_name in student_to_plan:
+            continue
+        if not is_answer_literal_entity(student_name, student_entity):
+            continue
+
+        student_value = to_decimal(student_entity.get("value"))
+        if student_value is None:
+            continue
+
+        candidates: List[str] = []
+        for plan_name, plan_entity in plan_entities.items():
+            if plan_name in plan_to_student:
+                continue
+            location = normalize_empty(plan_entity.get("location"))
+            if not isinstance(location, str) or not re.fullmatch(r"step\d+", location):
+                continue
+            plan_value = to_decimal(plan_entity.get("value"))
+            if plan_value is not None and decimal_equal(student_value, plan_value):
+                candidates.append(plan_name)
+
+        if len(candidates) != 1:
+            continue
+
+        plan_name = candidates[0]
+        if not compatible_metadata(student_entity, plan_entities[plan_name]):
+            continue
+
+        student_to_plan[student_name] = plan_name
+        plan_to_student[plan_name] = student_name
+        changed = True
+
+    return changed
+
+
+def map_answer_literals_to_reference_literals(
+    plan_entities: Dict[str, Dict[str, Any]],
+    student_entities: Dict[str, Dict[str, Any]],
+    student_to_plan: Dict[str, str],
+    plan_to_student: Dict[str, str],
+) -> bool:
+    """
+    Map các literal cục bộ xuất hiện ở cả hai lời giải theo cùng value.
+
+    Khi Grader so sánh student với teacher, hai phía có thể cùng viết một hằng
+    số trung gian trực tiếp trong lời giải, ví dụ `4 * 300`, nhưng formalizer tạo
+    tên khác nhau: `student_answer_number_4` và `teacher_answer_number_4`.
+    Đây là cùng một ký hiệu tính toán, không phải một quan hệ mới.
+    """
+    changed = False
+    plan_literals_by_value: Dict[Decimal, List[str]] = {}
+    for plan_name, plan_entity in plan_entities.items():
+        if plan_name in plan_to_student:
+            continue
+        if not is_answer_literal_entity(plan_name, plan_entity):
+            continue
+        value = to_decimal(plan_entity.get("value"))
+        if value is None:
+            continue
+        plan_literals_by_value.setdefault(value, []).append(plan_name)
+
+    for student_name, student_entity in student_entities.items():
+        if student_name in student_to_plan:
+            continue
+        if not is_answer_literal_entity(student_name, student_entity):
+            continue
+
+        student_value = to_decimal(student_entity.get("value"))
+        if student_value is None:
+            continue
+
+        candidates = [
+            plan_name
+            for value, names in plan_literals_by_value.items()
+            if decimal_equal(student_value, value)
+            for plan_name in names
+            if plan_name not in plan_to_student
+            and compatible_metadata(student_entity, plan_entities[plan_name])
+        ]
+        if len(candidates) != 1:
+            continue
+
+        plan_name = candidates[0]
+        student_to_plan[student_name] = plan_name
+        plan_to_student[plan_name] = student_name
+        changed = True
+
+    return changed
+
+
 def map_by_expression_signature(
     plan_entities: Dict[str, Dict[str, Any]],
     student_entities: Dict[str, Dict[str, Any]],
@@ -417,6 +574,7 @@ def map_by_expression_signature(
         s_candidates = entity_signature_candidates(
             student_name,
             student_entity,
+            entities=student_entities,
             student_to_plan=student_to_plan,
         )
 
@@ -498,8 +656,8 @@ def infer_missing_internal_maps_from_target_expr(
             # Thử thay giả định rồi so signature target.
             trial_map = dict(student_to_plan)
             trial_map[s_unknown] = p_unknown
-            s_sig = expression_signature(s_expr, student_to_plan=trial_map)
-            p_sig = expression_signature(p_expr)
+            s_sig = expression_signature(s_expr, entities=student_entities, student_to_plan=trial_map)
+            p_sig = expression_signature(p_expr, entities=plan_entities)
 
             if s_sig == p_sig and compatible_metadata(student_entities[s_unknown], plan_entities[p_unknown]):
                 student_to_plan[s_unknown] = p_unknown
@@ -515,14 +673,23 @@ def compute_mapping(
 ) -> Tuple[Dict[str, str], Dict[str, str]]:
     student_to_plan, plan_to_student = auto_map_common_prefix_until_target(plan_entities, student_entities)
 
-    # Lặp để map lan truyền. Giới hạn theo số entity để tránh vòng lặp vô hạn.
+    # Lặp để map lan truyền. Thứ tự ưu tiên:
+    # 1. Suy ngược từ target expr.
+    # 2. Map bằng expr/formalized_expr.
+    # 3. Map cùng tên result nếu metadata tương thích.
+    # 4. Cuối cùng mới dùng value fallback cho answer literal.
+    #
+    # Value fallback hữu ích nhưng dễ map nhầm khi học sinh tính sai, nên không
+    # được chạy trước formalized_expr/target inference.
     max_rounds = max(len(plan_entities), len(student_entities)) + 5
     for _ in range(max_rounds):
         changed = False
-        changed |= map_by_same_result_name(plan_entities, student_entities, student_to_plan, plan_to_student)
         changed |= infer_missing_internal_maps_from_target_expr(plan_entities, student_entities, student_to_plan, plan_to_student)
         changed |= map_by_expression_signature(plan_entities, student_entities, student_to_plan, plan_to_student)
         changed |= infer_missing_internal_maps_from_target_expr(plan_entities, student_entities, student_to_plan, plan_to_student)
+        changed |= map_by_same_result_name(plan_entities, student_entities, student_to_plan, plan_to_student)
+        changed |= map_answer_literals_to_reference_literals(plan_entities, student_entities, student_to_plan, plan_to_student)
+        changed |= map_answer_literals_by_value(plan_entities, student_entities, student_to_plan, plan_to_student)
         if not changed:
             break
 

@@ -783,6 +783,16 @@ def ast_contains_numeric_literal(node: ast.AST) -> bool:
     )
 
 
+def numeric_literals_in_ast(node: ast.AST) -> List[str]:
+    return [
+        repr(child.value)
+        for child in ast.walk(node)
+        if isinstance(child, ast.Constant)
+        and isinstance(child.value, (int, float))
+        and not isinstance(child.value, bool)
+    ]
+
+
 def eval_numeric_ast(node: ast.AST) -> Decimal:
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
         return Decimal(str(node.value))
@@ -917,6 +927,62 @@ def map_number_to_entity(
         candidates,
         key=lambda name: score_number_entity_candidate(name, problem_entities[name], context_terms),
     )
+
+
+class NumericLiteralEntityRewriter(ast.NodeTransformer):
+    def __init__(
+        self,
+        *,
+        problem_entities: Dict[str, Dict[str, Any]],
+        context_terms: set[str],
+    ) -> None:
+        self.problem_entities = problem_entities
+        self.context_terms = context_terms
+        self.unmapped_literals: List[str] = []
+
+    def visit_Constant(self, node: ast.Constant) -> ast.AST:
+        if not isinstance(node.value, (int, float)) or isinstance(node.value, bool):
+            return node
+
+        mapped = map_number_to_entity(
+            Decimal(str(node.value)),
+            self.problem_entities,
+            self.context_terms,
+        )
+        if not mapped:
+            self.unmapped_literals.append(repr(node.value))
+            return node
+
+        return ast.copy_location(ast.Name(id=mapped, ctx=ast.Load()), node)
+
+
+def rewrite_numeric_literals_to_entities(
+    expr_ast: ast.AST,
+    *,
+    lhs: str,
+    raw_expr: str,
+    problem_entities: Dict[str, Dict[str, Any]],
+) -> ast.AST:
+    """
+    LLM đôi khi viết literal trong dòng tính toán dù số đó đã có entity input.
+    Ở tầng Planner, ta chỉ cho phép repair nếu literal map được về entity thật
+    của đề bài/conversion; derived number vẫn bị reject.
+    """
+    rewriter = NumericLiteralEntityRewriter(
+        problem_entities=problem_entities,
+        context_terms=code_context_terms(lhs, raw_expr),
+    )
+    rewritten = rewriter.visit(ast.fix_missing_locations(expr_ast))
+    ast.fix_missing_locations(rewritten)
+    if rewriter.unmapped_literals:
+        raise PlannerError(
+            f"Assignment {lhs} = {raw_expr} đang dùng số literal trực tiếp trong dòng tính toán "
+            f"và không map được literal {rewriter.unmapped_literals} sang input entity. "
+            "Hãy bind dữ kiện số/fraction/percentage thành biến riêng trước, rồi chỉ dùng biến trong phép tính. "
+            "Ví dụ a third phải là pacman_fraction = 1 / 3; wasted = tokens * pacman_fraction, "
+            "không viết wasted = tokens / 3."
+        )
+    return rewritten
 
 
 def op_symbol(op: ast.operator) -> str:
@@ -1087,6 +1153,101 @@ def infer_plan_units(
     return unique_units[0] if unique_units else None, unique_grands[0] if unique_grands else None
 
 
+def unit_base(unit: Any) -> Optional[str]:
+    unit_text = normalize_empty(unit)
+    if unit_text is None:
+        return None
+    terms = text_terms(unit_text)
+    for term in terms:
+        if term in UNIT_BASE_ALIASES:
+            return UNIT_BASE_ALIASES[term]
+    return singularize_token(str(unit_text).strip().lower())
+
+
+def parse_conversion_entity_name(name: str) -> Optional[Tuple[str, str]]:
+    match = re.match(r"^unit_conversion_(.+)_per_(.+)$", name)
+    if not match:
+        return None
+    numerator = match.group(1).replace("_", " ")
+    denominator = match.group(2).replace("_", " ")
+    return numerator, denominator
+
+
+def result_name_mentions_unit(result_name: str, unit: str) -> bool:
+    unit_terms = text_terms(unit)
+    if not unit_terms:
+        return False
+    return bool(entity_name_terms(result_name) & unit_terms)
+
+
+def canonicalize_direct_unit_conversion(
+    symbolic_expr: str,
+    result_name: str,
+    problem_entities: Dict[str, Dict[str, Any]],
+) -> Tuple[str, Optional[str], Optional[str]]:
+    """
+    Chuyển dạng source * unit_conversion_X_per_Y thành step đổi đơn vị chuẩn:
+    expr chỉ còn source, còn result_unit là X/Y tương ứng.
+
+    Chỉ áp dụng khi unit của source khớp thật với conversion entity. Các rate
+    kiểu books_per_month * months_per_year vẫn giữ nguyên phép nhân.
+    """
+    patterns = [
+        re.match(
+            r"^(?P<source>[a-zA-Z_][a-zA-Z0-9_]*)\s*\*\s*(?P<conversion>unit_conversion_[a-zA-Z0-9_]+)$",
+            symbolic_expr,
+        ),
+        re.match(
+            r"^(?P<conversion>unit_conversion_[a-zA-Z0-9_]+)\s*\*\s*(?P<source>[a-zA-Z_][a-zA-Z0-9_]*)$",
+            symbolic_expr,
+        ),
+        re.match(
+            r"^(?P<source>[a-zA-Z_][a-zA-Z0-9_]*)\s*/\s*(?P<conversion>unit_conversion_[a-zA-Z0-9_]+)$",
+            symbolic_expr,
+        ),
+    ]
+
+    for index, match in enumerate(patterns):
+        if not match:
+            continue
+
+        source_name = match.group("source")
+        conversion_name = match.group("conversion")
+        source = problem_entities.get(source_name)
+        conversion = problem_entities.get(conversion_name)
+        conversion_units = parse_conversion_entity_name(conversion_name)
+        if not source or not conversion or not conversion_units:
+            return symbolic_expr, None, None
+
+        numerator_unit, denominator_unit = conversion_units
+        source_base = unit_base(source.get("unit"))
+        numerator_base = unit_base(numerator_unit)
+        denominator_base = unit_base(denominator_unit)
+        if source_base is None:
+            return symbolic_expr, None, None
+
+        is_division = index == 2
+        if is_division:
+            if source_base != numerator_base:
+                return symbolic_expr, None, None
+            result_unit = denominator_unit
+        else:
+            if source_base != denominator_base:
+                return symbolic_expr, None, None
+            result_unit = numerator_unit
+
+        if not result_name_mentions_unit(result_name, result_unit):
+            target_name = target_entity_name(problem_entities)
+            target = problem_entities[target_name]
+            target_unit = unit_base(target.get("unit"))
+            if target_unit != unit_base(result_unit):
+                return symbolic_expr, None, None
+
+        return source_name, result_unit, result_unit
+
+    return symbolic_expr, None, None
+
+
 def rename_plan_result(
     plan: Dict[str, Dict[str, Any]],
     old_result: str,
@@ -1130,12 +1291,17 @@ def plan_from_code(
             )
 
         if ast_contains_numeric_literal(expr_ast):
-            raise PlannerError(
-                f"Assignment {lhs} = {raw_expr} đang dùng số literal trực tiếp trong dòng tính toán. "
-                "Hãy bind dữ kiện số/fraction/percentage thành biến riêng trước, rồi chỉ dùng biến trong phép tính. "
-                "Ví dụ a third phải là pacman_fraction = 1 / 3; wasted = tokens * pacman_fraction, "
-                "không viết wasted = tokens / 3."
+            expr_ast = rewrite_numeric_literals_to_entities(
+                expr_ast,
+                lhs=lhs,
+                raw_expr=raw_expr,
+                problem_entities=problem_entities,
             )
+            if ast_contains_numeric_literal(expr_ast):
+                raise PlannerError(
+                    f"Assignment {lhs} = {raw_expr} vẫn còn số literal "
+                    f"{numeric_literals_in_ast(expr_ast)} sau khi repair."
+                )
 
         copied_name = single_name_in_ast(expr_ast)
         if copied_name is not None:
@@ -1173,7 +1339,16 @@ def plan_from_code(
         )
 
         result_name = target_name if wants_target else unique_result_name(lhs, set(problem_entities) | set(var_to_entity.values()))
-        result_unit, result_grand_unit = infer_plan_units(symbolic_expr, result_name, problem_entities, plan)
+        (
+            symbolic_expr,
+            result_unit_override,
+            result_grand_unit_override,
+        ) = canonicalize_direct_unit_conversion(symbolic_expr, result_name, problem_entities)
+        if result_unit_override is not None or result_grand_unit_override is not None:
+            result_unit = result_unit_override
+            result_grand_unit = result_grand_unit_override
+        else:
+            result_unit, result_grand_unit = infer_plan_units(symbolic_expr, result_name, problem_entities, plan)
         step_name = f"step{len(plan) + 1}"
         plan[step_name] = {
             "expr": symbolic_expr,

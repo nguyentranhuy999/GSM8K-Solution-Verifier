@@ -1,0 +1,17 @@
+CalculationTrace.yaml:
+- source_text: Convert 6 feet to inches by multiplying by 12, so the first child is
+    72 inches tall.
+  reported_expr: 6 * 12 = 72
+  result_text: height of the first child in inches
+- source_text: The second child is 2 inches taller than the first child, so they are
+    74 inches tall.
+  reported_expr: 72 + 2 = 74
+  result_text: height of the second child in inches
+- source_text: The third child is 5 inches shorter than the second child, so they
+    are 69 inches tall.
+  reported_expr: 74 - 5 = 69
+  result_text: height of the third child in inches
+- source_text: The fourth child is 3 inches taller than the third child, so they are
+    72 inches tall.
+  reported_expr: 69 + 3 = 72
+  result_text: height of the fourth child in inches

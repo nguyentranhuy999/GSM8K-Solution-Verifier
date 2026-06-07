@@ -1,0 +1,88 @@
+children:
+  value: 4
+  unit: children
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+  map: children
+  source: Caroline has 4 children.
+first_child_height:
+  value: 6
+  unit: feet
+  location: input
+  grand_unit: inches
+  expr: null
+  formalized_expr: null
+  map: first_child_height
+  source: The first child is 6 feet tall.
+second_child_height_taller_than_first:
+  value: 2
+  unit: inches
+  location: input
+  grand_unit: inches
+  expr: null
+  formalized_expr: null
+  map: second_child_height_taller_than_first
+  source: The second child is two inches taller than the first child.
+third_child_height_shorter_than_second:
+  value: 5
+  unit: inches
+  location: input
+  grand_unit: inches
+  expr: null
+  formalized_expr: null
+  map: third_child_height_shorter_than_second
+  source: The third child is 5 inches shorter than the second child.
+fourth_child_height_taller_than_third:
+  value: 3
+  unit: inches
+  location: input
+  grand_unit: inches
+  expr: null
+  formalized_expr: null
+  map: fourth_child_height_taller_than_third
+  source: The fourth child is three inches taller than the third child.
+fourth_child_height:
+  value: 72
+  unit: inches
+  location: target
+  grand_unit: inches
+  expr: third_child_height_in_inches + fourth_child_height_taller_than_third
+  formalized_expr: ((first_child_height * unit_conversion_inches_per_foot + second_child_height_taller_than_first)
+    - third_child_height_shorter_than_second) + fourth_child_height_taller_than_third
+  map: fourth_child_height
+  source: How tall is the fourth child, in inches?
+unit_conversion_inches_per_foot:
+  value: 12
+  unit: null
+  location: input
+  grand_unit: null
+  expr: null
+  formalized_expr: null
+  map: unit_conversion_inches_per_foot
+first_child_height_in_inches:
+  value: 72
+  unit: inches
+  location: step1
+  grand_unit: inches
+  expr: first_child_height * unit_conversion_inches_per_foot
+  formalized_expr: first_child_height * unit_conversion_inches_per_foot
+  map: first_child_height_in_inches
+second_child_height_in_inches:
+  value: 74
+  unit: inches
+  location: step2
+  grand_unit: inches
+  expr: first_child_height_in_inches + second_child_height_taller_than_first
+  formalized_expr: first_child_height * unit_conversion_inches_per_foot + second_child_height_taller_than_first
+  map: second_child_height_in_inches
+third_child_height_in_inches:
+  value: 69
+  unit: inches
+  location: step3
+  grand_unit: inches
+  expr: second_child_height_in_inches - third_child_height_shorter_than_second
+  formalized_expr: (first_child_height * unit_conversion_inches_per_foot + second_child_height_taller_than_first)
+    - third_child_height_shorter_than_second
+  map: third_child_height_in_inches

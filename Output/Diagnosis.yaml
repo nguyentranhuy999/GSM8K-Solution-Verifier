@@ -1,0 +1,6 @@
+- diagnosis: wrong calculation
+  step: step2
+  entity: second_child_height_in_inches
+- diagnosis: wrong calculation
+  step: step4
+  entity: fourth_child_height

@@ -1,0 +1,24 @@
+step1:
+  expr: first_child_height
+  result: first_child_height_inches
+  result_unit: inches
+  result_grand_unit: inches
+  reported_expr: 6 * 12 = 72
+step2:
+  expr: first_child_height_inches + second_child_height_taller_than_first
+  result: second_child_height_inches
+  result_unit: inches
+  result_grand_unit: inches
+  reported_expr: 72 + 2 = 74
+step3:
+  expr: second_child_height_inches - third_child_height_shorter_than_second
+  result: third_child_height_inches
+  result_unit: inches
+  result_grand_unit: inches
+  reported_expr: 74 - 5 = 69
+step4:
+  expr: third_child_height_inches + fourth_child_height_taller_than_third
+  result: fourth_child_height
+  result_unit: inches
+  result_grand_unit: inches
+  reported_expr: 69 + 3 = 72

@@ -81,6 +81,8 @@ STUDENT_PLAN_PATH = OUTPUT_DIR / "StudentPlan.yaml"
 STUDENT_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "StudentAnswerEntities.yaml"
 TEACHER_PLAN_PATH = OUTPUT_DIR / "TeacherPlan.yaml"
 TEACHER_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "TeacherAnswerEntities.yaml"
+STUDENT_TRACE_PATH = OUTPUT_DIR / "StudentTrace.yaml"
+TEACHER_TRACE_PATH = OUTPUT_DIR / "TeacherTrace.yaml"
 
 ERROR_PATH = OUTPUT_DIR / "Error.yaml"
 DIAGNOSIS_PATH = OUTPUT_DIR / "Diagnosis.yaml"
@@ -439,6 +441,14 @@ def add_error(
         errors.append(item)
 
 
+def is_answer_literal_entity(name: str, entity: Optional[Dict[str, Any]]) -> bool:
+    if not entity:
+        return False
+    if entity.get("source_type") == "answer_literal":
+        return True
+    return name.startswith(("student_answer_number_", "teacher_answer_number_"))
+
+
 # -----------------------------------------------------------------------------
 # Normalize inputs
 # -----------------------------------------------------------------------------
@@ -479,6 +489,7 @@ def normalize_entities(raw_entities: Dict[str, Any]) -> Dict[str, Dict[str, Any]
             "grand_unit": normalize_empty(entity.get("grand_unit")),
             "expr": normalize_empty(entity.get("expr")),
             "formalized_expr": normalize_empty(entity.get("formalized_expr")),
+            "source_type": normalize_empty(entity.get("source_type")),
             **({"map": normalize_empty(entity.get("map"))} if "map" in entity else {}),
         }
     return entities
@@ -530,9 +541,16 @@ def check_negative_count_target(entities: Dict[str, Dict[str, Any]], errors: Lis
             add_error(errors, "logic error", step=entity.get("location"), entity=target_name)
 
 
-def check_wrong_calculation(plan: Dict[str, Any], errors: List[Dict[str, Any]]) -> None:
+def check_wrong_calculation(
+    plan: Dict[str, Any],
+    entities: Dict[str, Dict[str, Any]],
+    errors: List[Dict[str, Any]],
+) -> None:
     for sname in step_names(plan):
         step = plan[sname]
+        expr = normalize_empty(step.get("expr"))
+        if expr is None:
+            continue
         reported_expr = normalize_empty(step.get("reported_expr"))
         if not reported_expr:
             continue
@@ -546,15 +564,138 @@ def check_wrong_calculation(plan: Dict[str, Any], errors: List[Dict[str, Any]]) 
             continue
 
         if not decimal_equal(expected, actual):
-            add_error(errors, "wrong calculation", step=sname, entity=step.get("result"))
+            has_unit_conversion = any(
+                token in entities and str(token).startswith("unit_conversion_")
+                for token in expr_tokens(str(expr))
+            )
+            if has_unit_conversion:
+                add_error(errors, "wrong unit conversion", step=sname, entity=step.get("result"))
+            else:
+                add_error(errors, "wrong calculation", step=sname, entity=step.get("result"))
 
 
 def check_unit_missing(entities: Dict[str, Dict[str, Any]], errors: List[Dict[str, Any]], *, mode: str) -> None:
     if mode not in {"student", "teacher"}:
         return
     for name, entity in entities.items():
-        if normalize_empty(entity.get("unit")) == "missing":
+        if normalize_empty(entity.get("unit")) != "missing":
+            continue
+        if is_generic_count_unit(entity.get("grand_unit")):
+            continue
+        if entity.get("location") not in {"target"}:
+            continue
+        if normalize_empty(entity.get("expr")) is None:
+            continue
+        if normalize_empty(entity.get("grand_unit")) is None:
+            continue
+        if normalize_empty(entity.get("grand_unit")) == "missing":
+            continue
+        if normalize_empty(entity.get("grand_unit")):
             add_error(errors, "unit missing", step=entity.get("location"), entity=name)
+
+
+CURRENCY_MARKER_RE = re.compile(r"[$€£¥]|\b(?:dollars?|usd|cents?)\b", flags=re.IGNORECASE)
+
+
+def normalize_unit_token(unit: Any) -> str:
+    return re.sub(r"[_\s]+", " ", str(unit or "").strip().lower())
+
+
+def unit_marker_present(text: str, unit: Any) -> bool:
+    unit_text = normalize_unit_token(unit)
+    if not unit_text:
+        return True
+    if is_money_unit(unit_text):
+        return bool(CURRENCY_MARKER_RE.search(text or ""))
+
+    escaped = re.escape(unit_text)
+    if re.search(rf"\b{escaped}s?\b", text or "", flags=re.IGNORECASE):
+        return True
+
+    singular = unit_text[:-1] if unit_text.endswith("s") else unit_text
+    if singular and re.search(rf"\b{re.escape(singular)}s?\b", text or "", flags=re.IGNORECASE):
+        return True
+    return False
+
+
+def arithmetic_fingerprint(text: str) -> str:
+    text = str(text or "").lower()
+    text = re.sub(r"[$€£¥]", "", text)
+    text = text.replace("×", "*").replace("÷", "/")
+    text = text.replace(",", "")
+    text = re.sub(r"\s+", "", text)
+    text = re.sub(r"(?<![a-zA-Z_])[-+]?\d+(?:\.\d+)?", normalize_numeric_match_text, text)
+    if "=" not in text:
+        return text
+    lhs, rhs = text.split("=", 1)
+    factors = lhs.split("*")
+    if len(factors) > 1 and all(factors) and not re.search(r"[+\-()]", lhs):
+        lhs = "*".join(sorted(factors))
+    return f"{lhs}={rhs}"
+
+
+def normalize_numeric_match_text(match: re.Match[str]) -> str:
+    raw = match.group(0)
+    try:
+        value = Decimal(raw)
+    except InvalidOperation:
+        return raw
+    normalized = format(value.normalize(), "f")
+    if normalized == "-0":
+        return "0"
+    return normalized
+
+
+def trace_source_by_reported_expr(mode: str) -> Dict[str, str]:
+    path = STUDENT_TRACE_PATH if mode == "student" else TEACHER_TRACE_PATH
+    raw = read_yaml_any(path, required=False)
+    if isinstance(raw, dict):
+        items = raw.get("CalculationTrace.yaml", [])
+    elif isinstance(raw, list):
+        items = raw
+    else:
+        items = []
+
+    sources: Dict[str, str] = {}
+    if not isinstance(items, list):
+        return sources
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        reported_expr = normalize_empty(item.get("reported_expr"))
+        if not reported_expr:
+            continue
+        source_text = normalize_empty(item.get("source_text")) or ""
+        sources[arithmetic_fingerprint(str(reported_expr))] = str(source_text)
+    return sources
+
+
+def check_unit_missing_from_trace(plan: Dict[str, Any], errors: List[Dict[str, Any]], *, mode: str) -> None:
+    if mode != "student":
+        return
+
+    trace_sources = trace_source_by_reported_expr(mode)
+    all_trace_text = " ".join(trace_sources.values())
+    target_result = normalize_empty(plan.get("target"))
+    for step_name in step_names(plan):
+        step = plan[step_name]
+        if target_result is not None and normalize_empty(step.get("result")) != target_result:
+            continue
+
+        result_unit = normalize_empty(step.get("result_unit"))
+        if result_unit in {None, "missing"}:
+            continue
+        if is_generic_count_unit(result_unit):
+            continue
+
+        reported_expr = str(normalize_empty(step.get("reported_expr")) or "")
+        source_text = trace_sources.get(arithmetic_fingerprint(reported_expr), "")
+        evidence_text = f"{source_text} {reported_expr}"
+        if unit_marker_present(all_trace_text, result_unit):
+            continue
+        if not unit_marker_present(evidence_text, result_unit):
+            add_error(errors, "unit missing", step=step_name, entity=step.get("result"))
 
 
 def check_only_final_answer(plan: Dict[str, Any], errors: List[Dict[str, Any]]) -> None:
@@ -564,6 +705,7 @@ def check_only_final_answer(plan: Dict[str, Any], errors: List[Dict[str, Any]]) 
     step = plan[steps[0]]
     if normalize_empty(step.get("expr")) is None:
         add_error(errors, "only final answer", step=steps[0], entity=step.get("result"))
+        add_error(errors, "missing step", step=steps[0], entity=step.get("result"))
 
 
 CONVERTIBLE_UNIT_GROUPS = [
@@ -628,47 +770,93 @@ def same_convertible_family(unit_a: Any, unit_b: Any) -> bool:
     return False
 
 
-def collect_add_sub_pairs(expr: str) -> List[Tuple[str, str]]:
-    """Lấy các cặp operand trực tiếp trong phép + hoặc -."""
-    pairs: List[Tuple[str, str]] = []
+UnitInfo = Tuple[Optional[str], Optional[str]]
+
+
+def unit_info_for_node(node: ast.AST, entities: Dict[str, Dict[str, Any]]) -> Optional[UnitInfo]:
+    if isinstance(node, ast.Name):
+        entity = entities.get(node.id)
+        if not entity:
+            return None
+        return normalized_unit(entity.get("unit")), normalized_unit(entity.get("grand_unit"))
+
+    if isinstance(node, ast.Constant):
+        return None, None
+
+    if isinstance(node, ast.UnaryOp):
+        return unit_info_for_node(node.operand, entities)
+
+    if isinstance(node, ast.BinOp):
+        left = unit_info_for_node(node.left, entities)
+        right = unit_info_for_node(node.right, entities)
+        if left is None or right is None:
+            return None
+
+        left_scalar = left == (None, None)
+        right_scalar = right == (None, None)
+        if isinstance(node.op, (ast.Mult, ast.Div)):
+            if left_scalar:
+                return right
+            if right_scalar:
+                return left
+            if is_generic_count_unit(left[0]) and not is_generic_count_unit(right[0]):
+                return right
+            if isinstance(node.op, ast.Mult) and is_generic_count_unit(right[0]) and not is_generic_count_unit(left[0]):
+                return left
+            return None
+
+        if isinstance(node.op, (ast.Add, ast.Sub)):
+            if unit_infos_compatible(left, right):
+                return left
+            return None
+
+    return None
+
+
+def unit_infos_compatible(left: UnitInfo, right: UnitInfo) -> bool:
+    left_unit, left_grand = left
+    right_unit, right_grand = right
+    if left_unit == right_unit and left_grand == right_grand:
+        return True
+    if is_generic_count_unit(left_unit) and is_generic_count_unit(right_unit):
+        return True
+    return False
+
+
+def collect_add_sub_unit_pairs(expr: str, entities: Dict[str, Dict[str, Any]]) -> List[Tuple[UnitInfo, UnitInfo]]:
+    """Lấy unit của hai operand trực tiếp trong phép + hoặc -."""
+    pairs: List[Tuple[UnitInfo, UnitInfo]] = []
     try:
         tree = ast.parse(expr, mode="eval")
     except SyntaxError:
         return pairs
 
-    def first_name(node: ast.AST) -> Optional[str]:
-        if isinstance(node, ast.Name):
-            return node.id
-        names = [n.id for n in ast.walk(node) if isinstance(n, ast.Name)]
-        return names[0] if names else None
-
     for node in ast.walk(tree):
         if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub)):
-            left = first_name(node.left)
-            right = first_name(node.right)
-            if left and right:
+            left = unit_info_for_node(node.left, entities)
+            right = unit_info_for_node(node.right, entities)
+            if left is not None and right is not None:
                 pairs.append((left, right))
     return pairs
 
 
-def check_wrong_relationship(plan: Dict[str, Any], entities: Dict[str, Dict[str, Any]], errors: List[Dict[str, Any]]) -> None:
+def check_wrong_relationship(
+    plan: Dict[str, Any],
+    entities: Dict[str, Dict[str, Any]],
+    errors: List[Dict[str, Any]],
+    *,
+    suppressed_steps: Optional[Set[str]] = None,
+) -> None:
+    suppressed_steps = suppressed_steps or set()
     for sname in step_names(plan):
+        if sname in suppressed_steps:
+            continue
         step = plan[sname]
         expr = normalize_empty(step.get("expr"))
         if not expr:
             continue
 
-        for left_name, right_name in collect_add_sub_pairs(expr):
-            if left_name not in entities or right_name not in entities:
-                continue
-
-            left = entities[left_name]
-            right = entities[right_name]
-            left_unit = normalize_empty(left.get("unit"))
-            right_unit = normalize_empty(right.get("unit"))
-            left_grand = normalize_empty(left.get("grand_unit"))
-            right_grand = normalize_empty(right.get("grand_unit"))
-
+        for (left_unit, left_grand), (right_unit, right_grand) in collect_add_sub_unit_pairs(expr, entities):
             unit_diff = left_unit != right_unit
             grand_diff = left_grand != right_grand
 
@@ -831,8 +1019,17 @@ def symbolic_expr_matches_reported_lhs(
     return decimal_equal(symbolic_value, reported_value)
 
 
-def check_misreading_and_logic_error(plan: Dict[str, Any], entities: Dict[str, Dict[str, Any]], errors: List[Dict[str, Any]]) -> None:
+def check_misreading_and_logic_error(
+    plan: Dict[str, Any],
+    entities: Dict[str, Dict[str, Any]],
+    errors: List[Dict[str, Any]],
+    *,
+    suppressed_steps: Optional[Set[str]] = None,
+) -> None:
+    suppressed_steps = suppressed_steps or set()
     for sname in step_names(plan):
+        if sname in suppressed_steps:
+            continue
         step = plan[sname]
         expr = normalize_empty(step.get("expr"))
         reported_expr = normalize_empty(step.get("reported_expr"))
@@ -887,6 +1084,78 @@ def check_misreading_and_logic_error(plan: Dict[str, Any], entities: Dict[str, D
                 add_error(errors, "logic error", step=sname, entity=token)
 
 
+def input_values_excluding_answer_literals(entities: Dict[str, Dict[str, Any]]) -> List[Decimal]:
+    values: List[Decimal] = []
+    for name, entity in entities.items():
+        if entity.get("location") != "input":
+            continue
+        if is_answer_literal_entity(name, entity):
+            continue
+        value = normalize_empty(entity.get("value"))
+        if value is None:
+            continue
+        try:
+            values.append(to_decimal(value, context=f"{name}.value"))
+        except InsideCheckerError:
+            continue
+    return values
+
+
+def check_answer_literal_misreading(
+    plan: Dict[str, Any],
+    entities: Dict[str, Dict[str, Any]],
+    errors: List[Dict[str, Any]],
+    *,
+    mode: str,
+    suppressed_steps: Optional[Set[str]] = None,
+) -> None:
+    """
+    Nếu học sinh tự đưa một số vào expr mà số đó không phải dữ kiện đề bài và
+    cũng chưa từng là kết quả bước trước, coi đó là đọc sai dữ kiện.
+
+    Rule này giữ vai trò backbone: formalizer vẫn được phép tạo
+    `student_answer_number_*`, còn checker mới quyết định literal đó có hợp lệ
+    trong dòng tính hiện tại hay không.
+    """
+    if mode != "student":
+        return
+
+    suppressed_steps = suppressed_steps or set()
+    known_values = input_values_excluding_answer_literals(entities)
+
+    for sname in step_names(plan):
+        step = plan[sname]
+        if sname in suppressed_steps:
+            result = normalize_empty(step.get("result"))
+            if result in entities:
+                try:
+                    known_values.append(to_decimal(entities[result].get("value"), context=f"{result}.value"))
+                except InsideCheckerError:
+                    pass
+            continue
+
+        expr = normalize_empty(step.get("expr"))
+        if expr:
+            for token in expr_tokens(expr):
+                entity = entities.get(token)
+                if not is_answer_literal_entity(token, entity):
+                    continue
+                try:
+                    value = to_decimal(entity.get("value"), context=f"{token}.value")
+                except (InsideCheckerError, AttributeError):
+                    continue
+                if any(decimal_equal(value, known) for known in known_values):
+                    continue
+                add_error(errors, "misreading", step=sname, entity=token)
+
+        result = normalize_empty(step.get("result"))
+        if result in entities:
+            try:
+                known_values.append(to_decimal(entities[result].get("value"), context=f"{result}.value"))
+            except InsideCheckerError:
+                pass
+
+
 def remove_extra_step_once(plan: Dict[str, Any], target_entity: Optional[str]) -> Tuple[Optional[Tuple[str, str]], Dict[str, Any]]:
     """
     Tìm một extra step, trả về ((step, entity), new_plan_without_step).
@@ -938,6 +1207,43 @@ def check_extra_step(plan: Dict[str, Any], entities: Dict[str, Dict[str, Any]], 
         if (sname, entity) not in seen:
             add_error(errors, "extra step", step=sname, entity=entity)
             seen.add((sname, entity))
+
+
+def root_error_steps(errors: List[Dict[str, Any]]) -> Set[str]:
+    root_labels = {"wrong calculation", "misreading", "wrong target"}
+    return {
+        str(error.get("step"))
+        for error in errors
+        if error.get("diagnosis") in root_labels and re.fullmatch(r"step\d+", str(error.get("step")))
+    }
+
+
+def tainted_steps_from_roots(plan: Dict[str, Any], root_steps: Set[str]) -> Set[str]:
+    tainted_steps = set(root_steps)
+    tainted_results = {
+        normalize_empty(plan[step].get("result"))
+        for step in root_steps
+        if step in plan and isinstance(plan[step], dict)
+    }
+    tainted_results = {result for result in tainted_results if isinstance(result, str)}
+
+    changed = True
+    while changed:
+        changed = False
+        for step_name in step_names(plan):
+            if step_name in tainted_steps:
+                continue
+            step = plan[step_name]
+            expr = normalize_empty(step.get("expr"))
+            if not expr or not (set(expr_tokens(expr)) & tainted_results):
+                continue
+            tainted_steps.add(step_name)
+            result = normalize_empty(step.get("result"))
+            if isinstance(result, str):
+                tainted_results.add(result)
+            changed = True
+
+    return tainted_steps
 
 
 # -----------------------------------------------------------------------------
@@ -996,13 +1302,21 @@ def run_checks(mode: str) -> List[Dict[str, Any]]:
 
     check_wrong_target(plan, entities, errors, mode=mode)
     check_negative_count_target(entities, errors)
-    check_wrong_calculation(plan, errors)
+    check_wrong_calculation(plan, entities, errors)
+    wrong_calculation_suppressed_steps = tainted_steps_from_roots(plan, root_error_steps(errors))
+    check_misreading_and_logic_error(
+        plan,
+        entities,
+        errors,
+        suppressed_steps=wrong_calculation_suppressed_steps,
+    )
+    suppressed_steps = tainted_steps_from_roots(plan, root_error_steps(errors))
     check_unit_missing(entities, errors, mode=mode)
+    check_unit_missing_from_trace(plan, errors, mode=mode)
     check_only_final_answer(plan, errors)
-    check_wrong_relationship(plan, entities, errors)
+    check_wrong_relationship(plan, entities, errors, suppressed_steps=suppressed_steps)
     check_double_count_summary_counts(plan, entities, errors)
     check_missing_step(plan, entities, errors)
-    check_misreading_and_logic_error(plan, entities, errors)
     check_extra_step(plan, entities, errors)
 
     return errors

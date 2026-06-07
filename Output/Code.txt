@@ -1,0 +1,6 @@
+first_child_height_feet = 6
+first_child_height_inches = first_child_height_feet * 12
+second_child_height_inches = first_child_height_inches + 2
+third_child_height_inches = second_child_height_inches - 5
+fourth_child_height_inches = third_child_height_inches + 3
+answer = fourth_child_height_inches

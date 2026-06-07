@@ -58,11 +58,14 @@ def clear_pipeline_outputs(root_dir: Path) -> None:
         "PlanEntities.yaml",
         "TeacherPlan.yaml",
         "TeacherAnswerEntities.yaml",
+        "TeacherTrace.yaml",
         "StudentPlan.yaml",
         "StudentAnswerEntities.yaml",
+        "StudentTrace.yaml",
         "Diagnosis.yaml",
         "Wrong.yaml",
         "Error.yaml",
+        "LLMChecker.yaml",
         "Log.yaml",
         "Hint.txt",
     ]
@@ -289,6 +292,11 @@ def result_fieldnames() -> list[str]:
         "label_score",
         "label_exact_match",
         "exact_match",
+        "llmchecker_invoked",
+        "llmchecker_llm_called",
+        "llmchecker_mode",
+        "llmchecker_reason",
+        "llmchecker_failed_stage",
         "error_stage",
         "error",
         "duration_seconds",
@@ -297,12 +305,16 @@ def result_fieldnames() -> list[str]:
         "diagnosis_yaml",
         "wrong_yaml",
         "problem_entities_yaml",
+        "teacher_trace_yaml",
         "teacher_plan_yaml",
         "teacher_entities_yaml",
+        "student_trace_yaml",
         "student_plan_yaml",
         "student_entities_yaml",
         "plan_yaml",
         "plan_entities_yaml",
+        "llmchecker_yaml",
+        "log_yaml",
     ]
 
 
@@ -332,6 +344,14 @@ def bad_result_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def report_case_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in rows
+        if row.get("error") or row.get("exact_match") != "yes" or row.get("llmchecker_llm_called") == "yes"
+    ]
+
+
 def write_bad_results(output_path: Path, rows: list[dict[str, Any]]) -> Path:
     bad_path = derived_output_path(output_path, "_wrong")
     write_results(bad_path, bad_result_rows(rows))
@@ -344,10 +364,38 @@ def remove_stale_csv_outputs(output_path: Path) -> None:
             path.unlink()
 
 
-def compute_summary(rows: list[dict[str, Any]], total_limit: int, input_path: Path, output_path: Path) -> dict[str, Any]:
-    completed = len(rows)
-    error_rows = [row for row in rows if row.get("error")]
-    attempted = [row for row in rows if not row.get("error")]
+def clean_error_report_dir(error_dir: Path) -> None:
+    error_dir.mkdir(parents=True, exist_ok=True)
+    stale_names = {
+        "Summary.md",
+        "index.html",
+    }
+    for path in list(error_dir.iterdir()):
+        if path.is_dir() and path.name.isdigit():
+            shutil.rmtree(path)
+        elif path.is_file() and path.name in stale_names:
+            path.unlink()
+
+
+def clean_benchmark_run_outputs(error_dir: Path, output_path: Path) -> None:
+    """
+    Dọn artefact benchmark cũ trước khi bắt đầu run mới.
+
+    `write_error_report()` cũng dọn case folder ở cuối run, nhưng nếu benchmark
+    bị dừng giữa chừng thì dashboard/folder cũ vẫn dễ gây hiểu nhầm. Vì vậy
+    non-resume run sẽ clean ngay từ đầu.
+    """
+    clean_error_report_dir(error_dir)
+    for path in {
+        output_path,
+        derived_output_path(output_path, "_wrong"),
+        summary_output_path(output_path),
+    }:
+        if path.exists() and path.is_file():
+            path.unlink()
+
+
+def score_attempted_rows(attempted: list[dict[str, Any]]) -> dict[str, Any]:
     attempted_rows = len(attempted)
     exact_matches = [row for row in attempted if row.get("exact_match") == "yes"]
     wrong_matches = [row for row in attempted if row.get("wrong_match") == "yes"]
@@ -398,13 +446,63 @@ def compute_summary(rows: list[dict[str, Any]], total_limit: int, input_path: Pa
         error_label_tp_count,
         error_label_tp_count + error_label_fn_count,
     )
-    error_label_f1_micro = f1_score(error_label_precision_micro, error_label_recall_micro)
     wrong_yes_precision = safe_divide(wrong_yes_tp, wrong_yes_tp + wrong_yes_fp)
     wrong_yes_recall = safe_divide(wrong_yes_tp, wrong_yes_tp + wrong_yes_fn)
-    wrong_yes_f1 = f1_score(wrong_yes_precision, wrong_yes_recall)
-    wrong_accuracy = safe_divide(len(wrong_matches), attempted_rows)
-    error_label_hit_rate = safe_divide(error_label_partial_match_rows, error_label_expected_rows)
-    exact_match = safe_divide(len(exact_matches), attempted_rows)
+
+    return {
+        "metrics": {
+            "wrong_accuracy": safe_divide(len(wrong_matches), attempted_rows),
+            "wrong_f1": f1_score(wrong_yes_precision, wrong_yes_recall),
+            "error_label_hit_rate": safe_divide(error_label_partial_match_rows, error_label_expected_rows),
+            "error_label_f1": f1_score(error_label_precision_micro, error_label_recall_micro),
+            "exact_match": safe_divide(len(exact_matches), attempted_rows),
+        },
+        "support": {
+            "attempted_rows": attempted_rows,
+            "exact_match_rows": len(exact_matches),
+            "wrong_match_rows": len(wrong_matches),
+            "wrong_tp": wrong_yes_tp,
+            "wrong_fp": wrong_yes_fp,
+            "wrong_tn": wrong_yes_tn,
+            "wrong_fn": wrong_yes_fn,
+            "error_label_expected_rows": error_label_expected_rows,
+            "error_label_partial_match_rows": error_label_partial_match_rows,
+            "error_label_tp": error_label_tp_count,
+            "error_label_fp": error_label_fp_count,
+            "error_label_fn": error_label_fn_count,
+        },
+    }
+
+
+def compute_summary(rows: list[dict[str, Any]], total_limit: int, input_path: Path, output_path: Path) -> dict[str, Any]:
+    completed = len(rows)
+    error_rows = [row for row in rows if row.get("error")]
+    attempted = [row for row in rows if not row.get("error")]
+    attempted_rows = len(attempted)
+    llmchecker_invoked_rows = [row for row in attempted if row.get("llmchecker_invoked") == "yes"]
+    llmchecker_llm_called_rows = [row for row in attempted if row.get("llmchecker_llm_called") == "yes"]
+    llmchecker_fallback_rows = [row for row in attempted if row.get("llmchecker_failed_stage")]
+    no_llmchecker_llm_rows = [
+        row for row in attempted
+        if row.get("llmchecker_llm_called") != "yes"
+    ]
+    symbolic_pipeline_pass_rows = [
+        row for row in attempted
+        if not row.get("llmchecker_failed_stage")
+    ]
+    symbolic_pipeline_fallback_rows = [
+        row for row in attempted
+        if row.get("llmchecker_failed_stage")
+    ]
+    overall_score = score_attempted_rows(attempted)
+    no_llmchecker_llm_score = score_attempted_rows(no_llmchecker_llm_rows)
+    symbolic_pipeline_score = score_attempted_rows(symbolic_pipeline_pass_rows)
+    fallback_score = score_attempted_rows(symbolic_pipeline_fallback_rows)
+
+    fallback_stage_counts: dict[str, int] = {}
+    for row in symbolic_pipeline_fallback_rows:
+        stage = str(row.get("llmchecker_failed_stage") or "unknown")
+        fallback_stage_counts[stage] = fallback_stage_counts.get(stage, 0) + 1
 
     error_stage_counts: dict[str, int] = {}
     for row in error_rows:
@@ -421,25 +519,32 @@ def compute_summary(rows: list[dict[str, Any]], total_limit: int, input_path: Pa
         "pending_rows": max(total_limit - completed, 0),
         "attempted_rows": attempted_rows,
         "error_rows": len(error_rows),
-        "metrics": {
-            "wrong_accuracy": wrong_accuracy,
-            "wrong_f1": wrong_yes_f1,
-            "error_label_hit_rate": error_label_hit_rate,
-            "error_label_f1": error_label_f1_micro,
-            "exact_match": exact_match,
-        },
+        "metrics": overall_score["metrics"],
         "support": {
-            "exact_match_rows": len(exact_matches),
-            "wrong_match_rows": len(wrong_matches),
-            "wrong_tp": wrong_yes_tp,
-            "wrong_fp": wrong_yes_fp,
-            "wrong_tn": wrong_yes_tn,
-            "wrong_fn": wrong_yes_fn,
-            "error_label_expected_rows": error_label_expected_rows,
-            "error_label_partial_match_rows": error_label_partial_match_rows,
-            "error_label_tp": error_label_tp_count,
-            "error_label_fp": error_label_fp_count,
-            "error_label_fn": error_label_fn_count,
+            **overall_score["support"],
+            "llmchecker_invoked_rows": len(llmchecker_invoked_rows),
+            "llmchecker_llm_called_rows": len(llmchecker_llm_called_rows),
+            "llmchecker_fallback_rows": len(llmchecker_fallback_rows),
+        },
+        "no_llmchecker_llm": {
+            "description": "Metrics over attempted rows where LLMChecker did not call an LLM API.",
+            "metrics": no_llmchecker_llm_score["metrics"],
+            "support": {
+                **no_llmchecker_llm_score["support"],
+                "excluded_llmchecker_llm_called_rows": len(llmchecker_llm_called_rows),
+            },
+        },
+        "symbolic_pipeline": {
+            "description": "Metrics split by whether the deterministic symbolic pipeline completed before LLMChecker fallback.",
+            "pass": {
+                "metrics": symbolic_pipeline_score["metrics"],
+                "support": symbolic_pipeline_score["support"],
+            },
+            "fallback": {
+                "metrics": fallback_score["metrics"],
+                "support": fallback_score["support"],
+                "stage_counts": fallback_stage_counts,
+            },
         },
         "error_causing_labels": sorted(ERROR_CAUSING_LABELS),
         "error_stage_counts": error_stage_counts,
@@ -485,11 +590,12 @@ def classify_error_stage(stdout: str, stderr: str, error: str = "") -> str:
         "InsideChecker",
         "Mapper",
         "CompareChecker",
+        "LLMChecker",
     ]:
         if f"Fail {stage}" in text:
             return stage
     running = re.findall(
-        r"Running (Tutor|Solver|ProblemFormalizer|TeacherAnswerFormalizer|StudentAnswerFormalizer|InsideCheckerTeacher|InsideCheckerStudent|Mapper|CompareChecker)\.\.\.",
+        r"Running (Tutor|Solver|ProblemFormalizer|TeacherAnswerFormalizer|StudentAnswerFormalizer|InsideCheckerTeacher|InsideCheckerStudent|Mapper|CompareChecker|LLMCheckerFallback|LLMCheckerReview)\.\.\.",
         text,
     )
     if running and "Reason:" in text:
@@ -533,12 +639,61 @@ def snapshot_outputs(root_dir: Path) -> dict[str, str]:
         "diagnosis_yaml": read_snapshot(output_file(root_dir, "Diagnosis.yaml")),
         "wrong_yaml": read_snapshot(output_file(root_dir, "Wrong.yaml")),
         "problem_entities_yaml": read_snapshot(output_file(root_dir, "ProblemEntities.yaml")),
+        "teacher_trace_yaml": read_snapshot(output_file(root_dir, "TeacherTrace.yaml")),
         "teacher_plan_yaml": read_snapshot(output_file(root_dir, "TeacherPlan.yaml")),
         "teacher_entities_yaml": read_snapshot(output_file(root_dir, "TeacherAnswerEntities.yaml")),
+        "student_trace_yaml": read_snapshot(output_file(root_dir, "StudentTrace.yaml")),
         "student_plan_yaml": read_snapshot(output_file(root_dir, "StudentPlan.yaml")),
         "student_entities_yaml": read_snapshot(output_file(root_dir, "StudentAnswerEntities.yaml")),
         "plan_yaml": read_snapshot(output_file(root_dir, "Plan.yaml")),
         "plan_entities_yaml": read_snapshot(output_file(root_dir, "PlanEntities.yaml")),
+        "llmchecker_yaml": read_snapshot(output_file(root_dir, "LLMChecker.yaml")),
+        "log_yaml": read_snapshot(output_file(root_dir, "Log.yaml")),
+    }
+
+
+def yaml_dict_from_text(text: str) -> dict[str, Any]:
+    if not text.strip():
+        return {}
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def llmchecker_metadata(row: dict[str, Any]) -> dict[str, str]:
+    checker_data = yaml_dict_from_text(str(row.get("llmchecker_yaml") or ""))
+    log_data = yaml_dict_from_text(str(row.get("log_yaml") or ""))
+    grader_call = checker_data.get("grader_call")
+    if not isinstance(grader_call, dict):
+        grader_call = {}
+
+    def text_value(value: Any) -> str:
+        return "" if value is None else str(value)
+
+    invoked = bool(grader_call.get("called_by_grader") or checker_data)
+    llm_called = bool(
+        grader_call.get("llm_called")
+        or checker_data.get("llm_called")
+        or str(checker_data.get("raw_response") or "").strip()
+    )
+
+    return {
+        "llmchecker_invoked": "yes" if invoked else "no",
+        "llmchecker_llm_called": "yes" if llm_called else "no",
+        "llmchecker_mode": text_value(
+            grader_call.get("mode") or checker_data.get("mode") or log_data.get("Grader_llmchecker_mode")
+        ),
+        "llmchecker_reason": text_value(
+            grader_call.get("reason")
+            or checker_data.get("reason")
+            or log_data.get("Grader_llmchecker_reason")
+        ),
+        "llmchecker_failed_stage": text_value(
+            grader_call.get("failed_stage")
+            or log_data.get("Grader_failed_stage")
+        ),
     }
 
 
@@ -580,6 +735,11 @@ def run_one_row(
         "label_score": "",
         "label_exact_match": "no",
         "exact_match": "no",
+        "llmchecker_invoked": "no",
+        "llmchecker_llm_called": "no",
+        "llmchecker_mode": "",
+        "llmchecker_reason": "",
+        "llmchecker_failed_stage": "",
         "error_stage": "",
         "error": "",
         "duration_seconds": "",
@@ -604,6 +764,7 @@ def run_one_row(
         result_row["pipeline_stdout"] = completed.stdout.strip()
         result_row["pipeline_stderr"] = completed.stderr.strip()
         result_row.update(snapshot_outputs(root_dir))
+        result_row.update(llmchecker_metadata(result_row))
 
         if completed.returncode != 0:
             result_row["error_stage"] = classify_error_stage(
@@ -633,10 +794,14 @@ def run_one_row(
         )
 
         status = "OK" if result_row["exact_match"] == "yes" else "MISMATCH"
+        llm_note = ""
+        if result_row.get("llmchecker_llm_called") == "yes":
+            failed_stage = result_row.get("llmchecker_failed_stage")
+            llm_note = f", llmchecker={failed_stage or result_row.get('llmchecker_mode')}"
         record_progress_message(
             result_row,
             f"[{index}/{total}] {status}: expected={labels_to_text(expected_labels)!r}/{expected_wrong}, "
-            f"predicted={labels_to_text(predicted_labels)!r}/{predicted_wrong}",
+            f"predicted={labels_to_text(predicted_labels)!r}/{predicted_wrong}{llm_note}",
             emit_log=emit_log,
         )
     except subprocess.TimeoutExpired as exc:
@@ -665,6 +830,7 @@ def run_one_row(
         if temp_dir is not None:
             try:
                 result_row.update(snapshot_outputs(Path(temp_dir.name) / "repo"))
+                result_row.update(llmchecker_metadata(result_row))
             except Exception:
                 pass
     finally:
@@ -820,6 +986,11 @@ def case_summary_text(row: dict[str, Any]) -> str:
             f"FP: {row.get('label_fp')}",
             f"FN: {row.get('label_fn')}",
             f"Label score: {row.get('label_score')}",
+            f"LLMChecker invoked: {row.get('llmchecker_invoked')}",
+            f"LLMChecker called LLM: {row.get('llmchecker_llm_called')}",
+            f"LLMChecker mode: {row.get('llmchecker_mode')}",
+            f"LLMChecker reason: {row.get('llmchecker_reason')}",
+            f"LLMChecker failed stage: {row.get('llmchecker_failed_stage')}",
             f"Error stage: {row.get('error_stage')}",
             f"Error: {row.get('error')}",
             "",
@@ -833,13 +1004,10 @@ def case_summary_text(row: dict[str, Any]) -> str:
 
 
 def write_error_report(error_dir: Path, rows: list[dict[str, Any]], summary: dict[str, Any]) -> None:
-    error_dir.mkdir(parents=True, exist_ok=True)
-    for stale_dir in error_dir.iterdir():
-        if stale_dir.is_dir() and stale_dir.name.isdigit():
-            shutil.rmtree(stale_dir)
+    clean_error_report_dir(error_dir)
 
     cases: list[dict[str, Any]] = []
-    for row in bad_result_rows(rows):
+    for row in report_case_rows(rows):
         index = str(row.get("index"))
         case_dir = error_dir / index
         case_dir.mkdir(parents=True, exist_ok=True)
@@ -849,23 +1017,36 @@ def write_error_report(error_dir: Path, rows: list[dict[str, Any]], summary: dic
             "Diagnosis.yaml": row.get("diagnosis_yaml", ""),
             "Wrong.yaml": row.get("wrong_yaml", ""),
             "ProblemEntities.yaml": row.get("problem_entities_yaml", ""),
+            "TeacherTrace.yaml": row.get("teacher_trace_yaml", ""),
             "TeacherPlan.yaml": row.get("teacher_plan_yaml", ""),
             "TeacherAnswerEntities.yaml": row.get("teacher_entities_yaml", ""),
+            "StudentTrace.yaml": row.get("student_trace_yaml", ""),
             "StudentPlan.yaml": row.get("student_plan_yaml", ""),
             "StudentAnswerEntities.yaml": row.get("student_entities_yaml", ""),
             "Plan.yaml": row.get("plan_yaml", ""),
             "PlanEntities.yaml": row.get("plan_entities_yaml", ""),
+            "LLMChecker.yaml": row.get("llmchecker_yaml", ""),
         }
         for name, content in files.items():
             fallback = "(empty)\n" if name.endswith(".txt") else "# unavailable\n"
             write_case_file(case_dir / name, content, fallback=fallback)
 
-        kind = "pipeline error" if row.get("error") else "mismatch"
+        if row.get("error"):
+            kind = "pipeline error"
+        elif row.get("exact_match") != "yes":
+            kind = "mismatch"
+        elif row.get("llmchecker_failed_stage"):
+            kind = "llm fallback"
+        else:
+            kind = "llm review"
+        stage = row.get("error_stage") or row.get("llmchecker_failed_stage")
+        if not stage and row.get("llmchecker_llm_called") == "yes":
+            stage = f"llmchecker {row.get('llmchecker_mode')}"
         cases.append(
             {
                 "id": index,
                 "kind": kind,
-                "stage": row.get("error_stage") or ("exact mismatch" if row.get("exact_match") != "yes" else "ok"),
+                "stage": stage or ("exact mismatch" if row.get("exact_match") != "yes" else "ok"),
                 "question": row.get("question", ""),
                 "expected": f"{row.get('expected_labels')} / {row.get('expected_wrong')}",
                 "predicted": f"{row.get('predicted_labels')} / {row.get('predicted_wrong')}",
@@ -875,6 +1056,18 @@ def write_error_report(error_dir: Path, rows: list[dict[str, Any]], summary: dic
         )
 
     metrics = summary.get("metrics", {})
+    support = summary.get("support", {})
+    no_llm = summary.get("no_llmchecker_llm", {})
+    no_llm_metrics = no_llm.get("metrics", {}) if isinstance(no_llm, dict) else {}
+    no_llm_support = no_llm.get("support", {}) if isinstance(no_llm, dict) else {}
+    symbolic = summary.get("symbolic_pipeline", {})
+    symbolic_pass = symbolic.get("pass", {}) if isinstance(symbolic, dict) else {}
+    symbolic_fallback = symbolic.get("fallback", {}) if isinstance(symbolic, dict) else {}
+    symbolic_pass_metrics = symbolic_pass.get("metrics", {}) if isinstance(symbolic_pass, dict) else {}
+    symbolic_pass_support = symbolic_pass.get("support", {}) if isinstance(symbolic_pass, dict) else {}
+    symbolic_fallback_metrics = symbolic_fallback.get("metrics", {}) if isinstance(symbolic_fallback, dict) else {}
+    symbolic_fallback_support = symbolic_fallback.get("support", {}) if isinstance(symbolic_fallback, dict) else {}
+    symbolic_fallback_stages = symbolic_fallback.get("stage_counts", {}) if isinstance(symbolic_fallback, dict) else {}
     summary_text = "\n".join(
         [
             "# Verify Benchmark Summary",
@@ -888,6 +1081,34 @@ def write_error_report(error_dir: Path, rows: list[dict[str, Any]], summary: dic
             f"- Error Label Hit Rate: {metrics.get('error_label_hit_rate'):.4f}",
             f"- Error Label F1: {metrics.get('error_label_f1'):.4f}",
             f"- Exact Match: {metrics.get('exact_match'):.4f}",
+            f"- LLMChecker invoked rows: {support.get('llmchecker_invoked_rows')}",
+            f"- LLMChecker called LLM rows: {support.get('llmchecker_llm_called_rows')}",
+            f"- LLMChecker fallback rows: {support.get('llmchecker_fallback_rows')}",
+            "",
+            "## No LLMChecker LLM Metrics",
+            "",
+            f"- Attempted: {no_llm_support.get('attempted_rows')}",
+            f"- Wrong Accuracy: {no_llm_metrics.get('wrong_accuracy'):.4f}",
+            f"- Wrong F1: {no_llm_metrics.get('wrong_f1'):.4f}",
+            f"- Error Label Hit Rate: {no_llm_metrics.get('error_label_hit_rate'):.4f}",
+            f"- Error Label F1: {no_llm_metrics.get('error_label_f1'):.4f}",
+            f"- Exact Match: {no_llm_metrics.get('exact_match'):.4f}",
+            "",
+            "## Symbolic Pipeline Metrics",
+            "",
+            f"- Symbolic pass attempted: {symbolic_pass_support.get('attempted_rows')}",
+            f"- Symbolic pass Wrong Accuracy: {symbolic_pass_metrics.get('wrong_accuracy'):.4f}",
+            f"- Symbolic pass Wrong F1: {symbolic_pass_metrics.get('wrong_f1'):.4f}",
+            f"- Symbolic pass Error Label Hit Rate: {symbolic_pass_metrics.get('error_label_hit_rate'):.4f}",
+            f"- Symbolic pass Error Label F1: {symbolic_pass_metrics.get('error_label_f1'):.4f}",
+            f"- Symbolic pass Exact Match: {symbolic_pass_metrics.get('exact_match'):.4f}",
+            f"- Fallback attempted: {symbolic_fallback_support.get('attempted_rows')}",
+            f"- Fallback Wrong Accuracy: {symbolic_fallback_metrics.get('wrong_accuracy'):.4f}",
+            f"- Fallback Wrong F1: {symbolic_fallback_metrics.get('wrong_f1'):.4f}",
+            f"- Fallback Error Label Hit Rate: {symbolic_fallback_metrics.get('error_label_hit_rate'):.4f}",
+            f"- Fallback Error Label F1: {symbolic_fallback_metrics.get('error_label_f1'):.4f}",
+            f"- Fallback Exact Match: {symbolic_fallback_metrics.get('exact_match'):.4f}",
+            f"- Fallback by stage: {json.dumps(symbolic_fallback_stages, ensure_ascii=False, sort_keys=True)}",
             f"- Updated at: {summary.get('updated_at')}",
             "",
         ]
@@ -904,7 +1125,9 @@ def run_benchmark(args: argparse.Namespace) -> None:
     output_path = normalize_path(args.output) if args.output else error_dir / DEFAULT_OUTPUT_NAME
     if args.resume and not args.write_csv:
         raise SystemExit("--resume cần --write-csv vì resume đọc lại các dòng đã chạy từ results.csv.")
-    if not args.write_csv and not args.output:
+    if not args.resume and args.write_error_report:
+        clean_benchmark_run_outputs(error_dir, output_path)
+    elif not args.write_csv and not args.output:
         remove_stale_csv_outputs(output_path)
 
     rows = read_benchmark_rows(input_path, args.limit)
@@ -1002,6 +1225,45 @@ def run_benchmark(args: argparse.Namespace) -> None:
     print(f"Error Label Hit Rate: {metrics['error_label_hit_rate']:.2%}")
     print(f"Error Label F1: {metrics['error_label_f1']:.2%}")
     print(f"Exact Match: {metrics['exact_match']:.2%}")
+    print(f"LLMChecker called LLM rows: {summary['support']['llmchecker_llm_called_rows']}")
+    print(f"LLMChecker fallback rows: {summary['support']['llmchecker_fallback_rows']}")
+    no_llm = summary.get("no_llmchecker_llm", {})
+    no_llm_metrics = no_llm.get("metrics", {}) if isinstance(no_llm, dict) else {}
+    no_llm_support = no_llm.get("support", {}) if isinstance(no_llm, dict) else {}
+    print(f"No LLMChecker LLM attempted rows: {no_llm_support.get('attempted_rows', 0)}")
+    print(
+        "No LLMChecker LLM metrics: "
+        f"Wrong Accuracy {no_llm_metrics.get('wrong_accuracy', 0):.2%}, "
+        f"Wrong F1 {no_llm_metrics.get('wrong_f1', 0):.2%}, "
+        f"Error Label Hit Rate {no_llm_metrics.get('error_label_hit_rate', 0):.2%}, "
+        f"Error Label F1 {no_llm_metrics.get('error_label_f1', 0):.2%}, "
+        f"Exact Match {no_llm_metrics.get('exact_match', 0):.2%}"
+    )
+    symbolic = summary.get("symbolic_pipeline", {})
+    symbolic_pass = symbolic.get("pass", {}) if isinstance(symbolic, dict) else {}
+    symbolic_fallback = symbolic.get("fallback", {}) if isinstance(symbolic, dict) else {}
+    symbolic_pass_metrics = symbolic_pass.get("metrics", {}) if isinstance(symbolic_pass, dict) else {}
+    symbolic_pass_support = symbolic_pass.get("support", {}) if isinstance(symbolic_pass, dict) else {}
+    symbolic_fallback_metrics = symbolic_fallback.get("metrics", {}) if isinstance(symbolic_fallback, dict) else {}
+    symbolic_fallback_support = symbolic_fallback.get("support", {}) if isinstance(symbolic_fallback, dict) else {}
+    print(f"Symbolic pipeline pass rows: {symbolic_pass_support.get('attempted_rows', 0)}")
+    print(
+        "Symbolic pass metrics: "
+        f"Wrong Accuracy {symbolic_pass_metrics.get('wrong_accuracy', 0):.2%}, "
+        f"Wrong F1 {symbolic_pass_metrics.get('wrong_f1', 0):.2%}, "
+        f"Error Label Hit Rate {symbolic_pass_metrics.get('error_label_hit_rate', 0):.2%}, "
+        f"Error Label F1 {symbolic_pass_metrics.get('error_label_f1', 0):.2%}, "
+        f"Exact Match {symbolic_pass_metrics.get('exact_match', 0):.2%}"
+    )
+    print(f"Symbolic fallback rows: {symbolic_fallback_support.get('attempted_rows', 0)}")
+    print(
+        "Fallback metrics: "
+        f"Wrong Accuracy {symbolic_fallback_metrics.get('wrong_accuracy', 0):.2%}, "
+        f"Wrong F1 {symbolic_fallback_metrics.get('wrong_f1', 0):.2%}, "
+        f"Error Label Hit Rate {symbolic_fallback_metrics.get('error_label_hit_rate', 0):.2%}, "
+        f"Error Label F1 {symbolic_fallback_metrics.get('error_label_f1', 0):.2%}, "
+        f"Exact Match {symbolic_fallback_metrics.get('exact_match', 0):.2%}"
+    )
     print(f"Errors by stage: {summary['error_stage_counts']}")
     if args.verbose:
         if args.write_csv:

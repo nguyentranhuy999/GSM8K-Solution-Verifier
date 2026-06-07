@@ -19,12 +19,15 @@ Output:
 Cách chạy:
   python3 Verifier/LLMChecker.py --mode teacher
   python3 Verifier/LLMChecker.py --mode review
+  python3 Verifier/LLMChecker.py --mode refine
   python3 Verifier/LLMChecker.py --mode auto
 
 Mode:
   - teacher: luôn so sánh trực tiếp lời giải học sinh với lời giải giáo viên.
   - review: chỉ gọi LLM nếu Diagnosis.yaml đang là different calculation và
     Wrong.yaml là No; nếu không đúng điều kiện thì bỏ qua.
+  - refine: chỉ gọi LLM nếu Diagnosis.yaml đang có wrong relationship để
+    phân loại subtype semantic chính xác hơn.
   - auto: nếu đúng điều kiện review thì review, ngược lại chạy teacher fallback.
 """
 
@@ -60,6 +63,8 @@ PLAN_PATH = OUTPUT_DIR / "Plan.yaml"
 PLAN_ENTITIES_PATH = OUTPUT_DIR / "PlanEntities.yaml"
 STUDENT_PLAN_PATH = OUTPUT_DIR / "StudentPlan.yaml"
 STUDENT_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "StudentAnswerEntities.yaml"
+TEACHER_PLAN_PATH = OUTPUT_DIR / "TeacherPlan.yaml"
+TEACHER_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "TeacherAnswerEntities.yaml"
 
 DEFAULT_MODEL = "google/gemini-2.0-flash-001"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -136,6 +141,27 @@ SEVERE_LABELS_IF_WRONG_MISSING = {
     "wrong relationship",
     "wrong target",
     "wrong unit conversion",
+}
+
+ERROR_CAUSING_LABELS = {
+    "do not convert units",
+    "logic error",
+    "misreading",
+    "missing step",
+    "only final answer",
+    "unit missing",
+    "wrong calculation",
+    "wrong relationship",
+    "wrong target",
+    "wrong unit conversion",
+}
+
+BROAD_REFINE_LABELS = {"wrong relationship"}
+STRUCTURAL_NON_ERROR_LABELS = {
+    "combine step",
+    "extra step",
+    "reverse steps",
+    "step separation",
 }
 
 
@@ -344,6 +370,27 @@ def append_diagnosis_file(diagnosis: List[Dict[str, Any]]) -> None:
     write_yaml_file(DIAGNOSIS_PATH, merge_diagnosis_items(diagnosis))
 
 
+def write_diagnosis_file(diagnosis: List[Dict[str, Any]]) -> None:
+    normalized: List[Dict[str, Any]] = []
+    seen = set()
+    for item in diagnosis:
+        for parsed in parse_diagnosis_items([item]):
+            key = (parsed.get("diagnosis"), parsed.get("step"), parsed.get("entity"))
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(parsed)
+    if not normalized:
+        normalized = [{"diagnosis": "all right", "step": None, "entity": None}]
+    write_yaml_file(DIAGNOSIS_PATH, normalized)
+
+
+def wrong_from_diagnosis(diagnosis: List[Dict[str, Any]], fallback: str = "No") -> str:
+    if any(item.get("diagnosis") in ERROR_CAUSING_LABELS for item in diagnosis):
+        return "Yes"
+    return normalize_wrong(fallback) or "No"
+
+
 def parse_llm_output(text: str) -> Dict[str, Any]:
     clean_text = strip_markdown_fence(text)
     try:
@@ -392,6 +439,21 @@ Label hợp lệ:
 - wrong relationship
 - wrong target
 - wrong unit conversion
+
+Định nghĩa nhãn quan trọng:
+- all right: lời giải đúng, các phép tính và kết luận đúng.
+- wrong calculation: dùng đúng phép/toán tử nhưng tính số học sai trong một phép tính.
+- wrong relationship: dùng sai quan hệ toán học giữa các đại lượng đúng; chỉ dùng khi không có subtype cụ thể hơn.
+- misreading: đọc sai dữ kiện đề bài, dùng nhầm số lượng/ngữ cảnh/điều kiện được cho.
+- logic error: suy luận sai về cấu trúc bài toán, điều kiện hoặc mục tiêu, không chỉ là sai số học.
+- wrong target: tính hoặc kết luận một đại lượng khác với câu hỏi.
+- wrong unit conversion: có đổi đơn vị nhưng dùng sai hệ số/chiều đổi.
+- do not convert units: đáng lẽ phải đổi đơn vị trước khi tính nhưng không đổi.
+- unit missing: kết quả thiếu đơn vị cần thiết trong lời giải học sinh.
+- missing step: dùng một kết quả trung gian quan trọng mà không trình bày bước tạo nó.
+- only final answer: chỉ đưa đáp án cuối, thiếu phần giải thích/tính toán cần thiết.
+- different calculation: cách giải khác giáo viên nhưng hợp lệ và đáp án đúng, wrong: No.
+- combine step/reverse steps/step separation/extra step: khác cấu trúc bước nhưng toán vẫn đúng, thường wrong: No trừ khi đi kèm lỗi tính/toán thật.
 
 Output bắt buộc là YAML thuần, đúng schema:
 LLMChecker.yaml:
@@ -463,6 +525,37 @@ Nhiệm vụ riêng của review mode:
 - Chỉ kiểm tra lại xem quan hệ tính toán của học sinh có đúng không.
 - Nếu quan hệ đúng/hợp lệ, trả wrong: No, relationship_valid: true.
 - Nếu quan hệ sai, trả wrong: Yes, diagnosis: wrong relationship, relationship_valid: false.
+{snapshot_note}
+""".rstrip()
+    elif mode == "refine":
+        current_diagnosis_yaml = yaml.safe_dump(
+            current_diagnosis or [],
+            allow_unicode=True,
+            sort_keys=False,
+            default_flow_style=False,
+        ).strip()
+        snapshot_note = ""
+        if snapshots:
+            snapshot_parts = []
+            for name, content in snapshots.items():
+                if content.strip():
+                    snapshot_parts.append(f"{name}:\n{content.strip()}")
+            if snapshot_parts:
+                snapshot_note = "\n\nFormalized output để tham khảo. Nếu mâu thuẫn với text gốc, ưu tiên text gốc:\n" + "\n\n".join(snapshot_parts)
+
+        review_note = f"""
+
+Ngữ cảnh refine:
+- Checker deterministic hiện ghi Diagnosis.yaml là:
+{current_diagnosis_yaml}
+- Wrong.yaml hiện là: {current_wrong}
+
+Nhiệm vụ riêng của refine mode:
+- Diagnosis hiện có `wrong relationship`, đây là nhãn rộng. Hãy kiểm tra lại bằng đề bài, lời giải giáo viên, lời giải học sinh.
+- Nếu học sinh thật sự sai, hãy thay `wrong relationship` bằng subtype chính xác hơn nếu có thể: misreading, logic error, wrong calculation, wrong target, wrong unit conversion, do not convert units, missing step, unit missing, only final answer.
+- Chỉ giữ `wrong relationship` nếu quan hệ phép tính sai nhưng không thuộc subtype cụ thể nào ở trên.
+- Nếu học sinh đúng hoặc chỉ khác cấu trúc bước/cách trình bày, trả wrong: No và diagnosis phù hợp như all right, different calculation, combine step, reverse steps, step separation, extra step, answer by word hoặc spelling errors.
+- Trả về toàn bộ diagnosis cuối cùng bạn muốn hệ thống dùng, không chỉ nhãn mới.
 {snapshot_note}
 """.rstrip()
 
@@ -584,8 +677,15 @@ def read_current_wrong() -> str:
 def should_review_different_calculation() -> bool:
     diagnosis = read_current_diagnosis()
     wrong = read_current_wrong()
-    has_different_calculation = any(item.get("diagnosis") == "different calculation" for item in diagnosis)
-    return has_different_calculation and wrong == "No"
+    labels = {item.get("diagnosis") for item in diagnosis}
+    has_different_calculation = "different calculation" in labels
+    has_structural_context = bool(labels & STRUCTURAL_NON_ERROR_LABELS)
+    return has_different_calculation and not has_structural_context and wrong == "No"
+
+
+def should_refine_wrong_relationship() -> bool:
+    diagnosis = read_current_diagnosis()
+    return any(item.get("diagnosis") in BROAD_REFINE_LABELS for item in diagnosis)
 
 
 def read_snapshot(path: Path) -> str:
@@ -598,6 +698,8 @@ def read_review_snapshots() -> Dict[str, str]:
     return {
         "Output/Plan.yaml": read_snapshot(PLAN_PATH),
         "Output/PlanEntities.yaml": read_snapshot(PLAN_ENTITIES_PATH),
+        "Output/TeacherPlan.yaml": read_snapshot(TEACHER_PLAN_PATH),
+        "Output/TeacherAnswerEntities.yaml": read_snapshot(TEACHER_ANSWER_ENTITIES_PATH),
         "Output/StudentPlan.yaml": read_snapshot(STUDENT_PLAN_PATH),
         "Output/StudentAnswerEntities.yaml": read_snapshot(STUDENT_ANSWER_ENTITIES_PATH),
     }
@@ -639,14 +741,16 @@ def call_llm_with_retries(
 
 
 def write_checker_outputs(*, mode: str, result: Dict[str, Any], overwrite_diagnosis: bool = True) -> None:
+    raw_response = result.get("raw_response", "")
     debug_data = {
         "mode": mode,
+        "llm_called": bool(str(raw_response).strip()),
         "wrong": result.get("wrong"),
         "diagnosis": result.get("diagnosis", []),
         "relationship_valid": result.get("relationship_valid"),
         "review_decision": result.get("review_decision", ""),
         "reason": result.get("reason", ""),
-        "raw_response": result.get("raw_response", ""),
+        "raw_response": raw_response,
     }
     write_yaml_file(LLM_CHECKER_PATH, debug_data)
 
@@ -718,15 +822,73 @@ def run_review_mode() -> None:
     write_checker_outputs(mode="review", result=kept, overwrite_diagnosis=False)
 
 
+def run_refine_mode() -> None:
+    current_diagnosis = read_current_diagnosis()
+    current_wrong = read_current_wrong()
+
+    if not should_refine_wrong_relationship():
+        write_checker_outputs(
+            mode="refine",
+            result={
+                "wrong": current_wrong or "No",
+                "diagnosis": current_diagnosis,
+                "relationship_valid": None,
+                "review_decision": "skip",
+                "reason": "Bỏ qua vì Diagnosis.yaml không có wrong relationship cần refine.",
+                "raw_response": "",
+            },
+            overwrite_diagnosis=False,
+        )
+        print("Skip LLMChecker")
+        return
+
+    inputs = read_inputs()
+    result = call_llm_with_retries(
+        mode="refine",
+        current_diagnosis=current_diagnosis,
+        current_wrong=current_wrong,
+        snapshots=read_review_snapshots(),
+        **inputs,
+    )
+
+    refined_diagnosis = result.get("diagnosis", [])
+    if not refined_diagnosis:
+        refined_diagnosis = current_diagnosis
+
+    refined_labels = {item.get("diagnosis") for item in refined_diagnosis}
+    has_specific_error = any(
+        label in ERROR_CAUSING_LABELS and label not in BROAD_REFINE_LABELS
+        for label in refined_labels
+    )
+    if has_specific_error:
+        refined_diagnosis = [
+            item
+            for item in refined_diagnosis
+            if item.get("diagnosis") not in BROAD_REFINE_LABELS
+        ]
+
+    wrong = wrong_from_diagnosis(refined_diagnosis, fallback=result.get("wrong", current_wrong or "No"))
+    result = {
+        **result,
+        "wrong": wrong,
+        "diagnosis": refined_diagnosis,
+        "review_decision": result.get("review_decision") or "refine",
+    }
+    write_checker_outputs(mode="refine", result=result, overwrite_diagnosis=False)
+    write_diagnosis_file(refined_diagnosis)
+    WRONG_PATH.write_text(f"{wrong}\n", encoding="utf-8")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LLM fallback checker for solution verification.")
     parser.add_argument(
         "--mode",
-        choices=["teacher", "review", "auto"],
+        choices=["teacher", "review", "refine", "auto"],
         default="teacher",
         help=(
             "teacher: so sánh trực tiếp teacher/student; "
             "review: chỉ kiểm tra lại different calculation + Wrong=No; "
+            "refine: phân loại lại wrong relationship thành subtype cụ thể hơn; "
             "auto: review nếu đúng điều kiện, ngược lại teacher."
         ),
     )
@@ -746,6 +908,8 @@ def run() -> None:
             run_teacher_mode()
         elif mode == "review":
             run_review_mode()
+        elif mode == "refine":
+            run_refine_mode()
         else:
             raise LLMCheckerError(f"Mode không hợp lệ: {mode}")
 

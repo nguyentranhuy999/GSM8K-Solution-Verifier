@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="720" viewBox="0 0 1180 720" role="img" aria-label="No-LLM Pipeline vs Base Model">
+<rect width="1180" height="720" fill="#ffffff"/>
+<text x="90" y="46" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="700" fill="#172033">No-LLM Pipeline vs Base Model</text>
+<text x="90" y="76" font-family="Inter, Arial, sans-serif" font-size="14" fill="#667085">Pipeline without LLMChecker API calls | openai/gpt-4o-mini | attempted=168</text>
+<text x="90" y="98" font-family="Inter, Arial, sans-serif" font-size="14" fill="#667085">Base model | openai/gpt-4o-mini | attempted=201 | errors=1</text>
+<line x1="90" y1="570.00" x2="1120" y2="570.00" stroke="#9aa4b2" stroke-width="1"/>
+<text x="74" y="575.00" text-anchor="end" font-family="Inter, Arial, sans-serif" font-size="13" fill="#667085">0%</text>
+<line x1="90" y1="480.00" x2="1120" y2="480.00" stroke="#d9dee8" stroke-width="1"/>
+<text x="74" y="485.00" text-anchor="end" font-family="Inter, Arial, sans-serif" font-size="13" fill="#667085">20%</text>
+<line x1="90" y1="390.00" x2="1120" y2="390.00" stroke="#d9dee8" stroke-width="1"/>
+<text x="74" y="395.00" text-anchor="end" font-family="Inter, Arial, sans-serif" font-size="13" fill="#667085">40%</text>
+<line x1="90" y1="300.00" x2="1120" y2="300.00" stroke="#d9dee8" stroke-width="1"/>
+<text x="74" y="305.00" text-anchor="end" font-family="Inter, Arial, sans-serif" font-size="13" fill="#667085">60%</text>
+<line x1="90" y1="210.00" x2="1120" y2="210.00" stroke="#d9dee8" stroke-width="1"/>
+<text x="74" y="215.00" text-anchor="end" font-family="Inter, Arial, sans-serif" font-size="13" fill="#667085">80%</text>
+<line x1="90" y1="120.00" x2="1120" y2="120.00" stroke="#d9dee8" stroke-width="1"/>
+<text x="74" y="125.00" text-anchor="end" font-family="Inter, Arial, sans-serif" font-size="13" fill="#667085">100%</text>
+<text x="32" y="345.0" transform="rotate(-90 32 345.0)" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="13" fill="#667085">Score</text>
+<rect x="135.50" y="184.29" width="51.50" height="385.71" rx="4" fill="#2563eb"/>
+<text x="161.25" y="176.29" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#172033">85.71%</text>
+<rect x="199.00" y="207.31" width="51.50" height="362.69" rx="4" fill="#f97316"/>
+<text x="224.75" y="199.31" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#172033">80.60%</text>
+<text x="193.00" y="598.00" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" fill="#172033">Wrong Accuracy</text>
+<text x="193.00" y="620.00" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="13" fill="#15803d">Pipeline +5.12 pts vs base</text>
+<rect x="341.50" y="164.63" width="51.50" height="405.37" rx="4" fill="#2563eb"/>
+<text x="367.25" y="156.63" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#172033">90.08%</text>
+<rect x="405.00" y="186.73" width="51.50" height="383.27" rx="4" fill="#f97316"/>
+<text x="430.75" y="178.73" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#172033">85.17%</text>
+<text x="399.00" y="598.00" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" fill="#172033">Wrong F1</text>
+<text x="399.00" y="620.00" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="13" fill="#15803d">Pipeline +4.91 pts vs base</text>
+<rect x="547.50" y="321.72" width="51.50" height="248.28" rx="4" fill="#2563eb"/>
+<text x="573.25" y="313.72" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#172033">55.17%</text>
+<rect x="611.00" y="360.23" width="51.50" height="209.77" rx="4" fill="#f97316"/>
+<text x="636.75" y="352.23" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#172033">46.62%</text>
+<text x="605.00" y="598.00" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" fill="#172033">Label Hit Rate</text>
+<text x="605.00" y="620.00" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="13" fill="#15803d">Pipeline +8.56 pts vs base</text>
+<rect x="753.50" y="361.13" width="51.50" height="208.87" rx="4" fill="#2563eb"/>
+<text x="779.25" y="353.13" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#172033">46.42%</text>
+<rect x="817.00" y="384.71" width="51.50" height="185.29" rx="4" fill="#f97316"/>
+<text x="842.75" y="376.71" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#172033">41.18%</text>
+<text x="811.00" y="598.00" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" fill="#172033">Label F1</text>
+<text x="811.00" y="620.00" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="13" fill="#15803d">Pipeline +5.24 pts vs base</text>
+<rect x="959.50" y="462.86" width="51.50" height="107.14" rx="4" fill="#2563eb"/>
+<text x="985.25" y="454.86" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#172033">23.81%</text>
+<rect x="1023.00" y="496.12" width="51.50" height="73.88" rx="4" fill="#f97316"/>
+<text x="1048.75" y="488.12" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#172033">16.42%</text>
+<text x="1017.00" y="598.00" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" fill="#172033">Exact Match</text>
+<text x="1017.00" y="620.00" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="13" fill="#15803d">Pipeline +7.39 pts vs base</text>
+<rect x="90" y="653" width="18" height="18" rx="4" fill="#2563eb"/>
+<text x="118" y="668" font-family="Inter, Arial, sans-serif" font-size="14" fill="#172033">Current pipeline</text>
+<rect x="280" y="653" width="18" height="18" rx="4" fill="#f97316"/>
+<text x="308" y="668" font-family="Inter, Arial, sans-serif" font-size="14" fill="#172033">Base model</text>
+</svg>

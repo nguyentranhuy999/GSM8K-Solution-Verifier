@@ -4,5 +4,23 @@
   },
   "code-runner.cwd": "${workspaceFolder}",
   "code-runner.runInTerminal": true,
-  "python.defaultInterpreterPath": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+  "python.defaultInterpreterPath": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3",
+  "files.watcherExclude": {
+    "**/__pycache__/**": true,
+    "**/.pytest_cache/**": true,
+    "**/Input/**": true,
+    "**/Output/**": true,
+    "**/Error*/**": true
+  },
+  "search.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/Input": true,
+    "**/Output": true,
+    "**/Error*": true
+  },
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true
+  }
 }

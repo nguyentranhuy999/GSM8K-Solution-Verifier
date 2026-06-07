@@ -17,6 +17,7 @@ lời giải do Solver tự lập.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -34,6 +35,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from Formalizer import StudentAnswerFormalizer as student_formalizer
+from Verifier import InsideChecker as inside_checker
 
 
 INPUT_DIR = ROOT_DIR / "Input"
@@ -45,6 +47,7 @@ PROBLEM_ENTITIES_PATH = OUTPUT_DIR / "ProblemEntities.yaml"
 
 TEACHER_PLAN_PATH = OUTPUT_DIR / "TeacherPlan.yaml"
 TEACHER_ANSWER_ENTITIES_PATH = OUTPUT_DIR / "TeacherAnswerEntities.yaml"
+TEACHER_TRACE_PATH = OUTPUT_DIR / "TeacherTrace.yaml"
 LOG_PATH = OUTPUT_DIR / "Log.yaml"
 
 DEFAULT_MODEL = "google/gemini-2.0-flash-001"
@@ -122,7 +125,7 @@ TeacherPlan.yaml:
 
 Mỗi step trong TeacherPlan.yaml có đúng 5 trường:
 - expr
-- result
+- result: entity được tạo ra, phải là một tên entity snake_case, không bao giờ là biểu thức.
 - result_unit
 - result_grand_unit
 - reported_expr
@@ -130,16 +133,35 @@ Mỗi step trong TeacherPlan.yaml có đúng 5 trường:
 Quy tắc step:
 - Tên step phải là step1, step2, step3, ... liên tục.
 - target nằm cuối TeacherPlan.yaml, cùng cấp với step1/step2.
-- target phải là target của đề bài.
+- target phải là target của đề bài, không bao giờ là biểu thức.
 - Không gộp nhiều phép tính giáo viên viết thành một step.
 - Mỗi dòng/phần có dấu "=" trong lời giải giáo viên phải tạo đúng một step riêng, theo đúng thứ tự xuất hiện.
 - reported_expr phải giữ đúng phép tính giáo viên viết ở dòng đó.
 - expr phải tương ứng với chính reported_expr của step đó.
+- Nếu một step sau dùng lại kết quả của phép tính trước, expr của step sau phải dùng entity result đã tạo,
+  không được tự bung lại phép tính trước trong expr của step sau.
+  Ví dụ nếu giáo viên đã viết `7 * 7 = 49` rồi sau đó viết `36 - 28 + 49 = 57`,
+  phải có một step riêng tạo entity cho 49; step sau dùng entity đó, không viết lại `7 * 7`.
+- Không viết biểu thức vào result. Ví dụ sai: result: remaining_after_second - closed_third.
+  Đúng: expr: remaining_after_second - closed_third, result: remaining_tabs.
+- Không được dùng cùng một result cho nhiều step.
+- Không dùng target entity cho bước trung gian. Chỉ dùng target làm result cho bước thật sự tạo đáp án/kết luận.
 - expr phải bao phủ toàn bộ vế trái của reported_expr. Ví dụ reported_expr là 30 * 2 + 50 = 110
   thì expr phải có entity tương ứng cho cả 30, 2 và 50, không được bỏ bớt toán hạng.
+- Khi thay value của entity vào expr, giá trị expr phải đúng bằng vế trái của reported_expr.
+  Nếu reported_expr là `7 * 100 = 700` thì expr phải biểu diễn đúng `7 * 100`, không được thêm chia/nhân
+  khiến giá trị symbolic khác phép tính giáo viên viết.
 - Không tạo bước chỉ copy một entity sang entity khác.
 - Không tạo reported_expr dạng tautology như 110 = 110. Nếu step đã tính ra đáp án cuối,
   đặt result của step đó là target.
+
+Quy trình tự kiểm tra nội bộ trước khi trả output, không được ghi phần này ra YAML:
+1. Đọc Input/TeacherAnswer.txt theo từng dòng từ trên xuống dưới.
+2. Tự lập danh sách các phép tính giáo viên viết hoặc ngụ ý rõ ràng, đặc biệt các dòng có dấu "=".
+3. Kiểm tra mỗi phép tính trong danh sách đó có đúng một step tương ứng, cùng thứ tự, cùng reported_expr.
+4. Kiểm tra không có phép tính nào bị gộp vào expr của step khác.
+5. Kiểm tra result và target chỉ là tên entity snake_case, không phải biểu thức.
+6. Kiểm tra step cuối tạo đúng target của đề bài.
 
 Quy tắc output:
 - Chỉ trả YAML thuần.
@@ -153,6 +175,7 @@ def build_user_prompt(
     problem: str,
     problem_entities: Dict[str, Any],
     teacher_answer: str,
+    calculation_trace: list[Dict[str, Any]],
     previous_error: Optional[str] = None,
 ) -> str:
     problem_entities_yaml = yaml.safe_dump(
@@ -161,7 +184,12 @@ def build_user_prompt(
         sort_keys=False,
         default_flow_style=False,
     )
-    equation_hints = student_formalizer.extract_equations_from_student_answer(teacher_answer)
+    trace_yaml = yaml.safe_dump(
+        calculation_trace,
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
+    )
     retry_note = ""
     if previous_error:
         retry_note = f"""
@@ -169,8 +197,9 @@ def build_user_prompt(
 Output trước bị reject vì lỗi:
 {previous_error}
 
-Hãy sửa lỗi trên. Những equation rõ ràng được liệt kê bên dưới sẽ được code
-validator kiểm tra, nên không được bỏ hoặc gộp vào step khác.
+Hãy sửa lỗi trên bằng cách đọc lại trực tiếp Input/TeacherAnswer.txt. Không tạo
+step ngoài lời giải, không bỏ step có phép tính rõ ràng, và không gộp phép tính
+đã được viết riêng vào expr của step khác.
 """.rstrip()
 
     return f"""
@@ -185,8 +214,15 @@ Output/ProblemEntities.yaml:
 Input/TeacherAnswer.txt:
 {teacher_answer}
 
-Detected explicit equations từ regex:
-{yaml.safe_dump(equation_hints, allow_unicode=True, sort_keys=False).strip()}
+CalculationTrace.yaml:
+{trace_yaml}
+
+Bắt buộc:
+- Mỗi item trong CalculationTrace.yaml phải tạo đúng một step tương ứng trong TeacherPlan.yaml.
+- Thứ tự step phải theo đúng thứ tự CalculationTrace.yaml.
+- step.reported_expr phải khớp reported_expr trong trace về mặt phép tính.
+- Không bỏ trace item dù giá trị đó được dùng lại ở step sau.
+- Nếu cần thêm step ngụ ý để tạo target của đề bài, chỉ thêm khi lời giải thật sự kết luận đại lượng đó.
 {retry_note}
 """.strip()
 
@@ -195,6 +231,7 @@ def call_openrouter(
     problem: str,
     problem_entities: Dict[str, Any],
     teacher_answer: str,
+    calculation_trace: list[Dict[str, Any]],
     previous_error: Optional[str] = None,
 ) -> str:
     load_dotenv(ROOT_DIR / ".env")
@@ -224,6 +261,7 @@ def call_openrouter(
                     problem,
                     problem_entities,
                     teacher_answer,
+                    calculation_trace,
                     previous_error=previous_error,
                 ),
             },
@@ -294,12 +332,161 @@ def target_entity_name(problem_entities: Dict[str, Dict[str, Any]]) -> str:
     return targets[0]
 
 
+def unique_entity_for_decimal_value(
+    value: Any,
+    entities: Dict[str, Dict[str, Any]],
+    *,
+    locations: Optional[set[str]] = None,
+) -> Optional[str]:
+    matches = []
+    for name, entity in entities.items():
+        if locations is not None and entity.get("location") not in locations:
+            continue
+        try:
+            entity_value = inside_checker.to_decimal(entity.get("value"), context=f"{name}.value")
+        except inside_checker.InsideCheckerError:
+            continue
+        if inside_checker.decimal_equal(entity_value, value):
+            matches.append(name)
+    return matches[0] if len(matches) == 1 else None
+
+
+def numeric_ast_value(node: ast.AST) -> Optional[Any]:
+    try:
+        return inside_checker.safe_eval_arithmetic(ast.unparse(node))
+    except Exception:
+        return None
+
+
+def build_expr_from_reported_lhs(
+    lhs: str,
+    entities: Dict[str, Dict[str, Any]],
+    prior_results_by_value: Dict[str, str],
+) -> Optional[str]:
+    try:
+        tree = ast.parse(lhs.replace("×", "*").replace("÷", "/"), mode="eval")
+    except SyntaxError:
+        return None
+
+    def entity_for_value(value: Any) -> Optional[str]:
+        value_key = str(value.normalize()) if hasattr(value, "normalize") else str(value)
+        if value_key in prior_results_by_value:
+            return prior_results_by_value[value_key]
+
+        return (
+            unique_entity_for_decimal_value(value, entities, locations={"input"})
+            or unique_entity_for_decimal_value(value, entities, locations={"target", "step1", "step2", "step3", "step4", "step5"})
+        )
+
+    class ReportedNumberMapper(ast.NodeTransformer):
+        unresolved_numeric = False
+
+        def replace_numeric_node(self, node: ast.AST) -> ast.AST:
+            value = numeric_ast_value(node)
+            if value is None:
+                return self.generic_visit(node)
+            entity_name = entity_for_value(value)
+            if not entity_name:
+                self.unresolved_numeric = True
+                return node
+            return ast.copy_location(ast.Name(id=entity_name, ctx=ast.Load()), node)
+
+        def visit_BinOp(self, node: ast.BinOp) -> ast.AST:  # noqa: N802
+            if isinstance(node.op, ast.Div):
+                value = numeric_ast_value(node)
+                entity_name = entity_for_value(value) if value is not None else None
+                if entity_name:
+                    return ast.copy_location(ast.Name(id=entity_name, ctx=ast.Load()), node)
+            return self.generic_visit(node)
+
+        def visit_UnaryOp(self, node: ast.UnaryOp) -> ast.AST:  # noqa: N802
+            if numeric_ast_value(node) is not None:
+                return self.replace_numeric_node(node)
+            return self.generic_visit(node)
+
+        def visit_Constant(self, node: ast.Constant) -> ast.AST:  # noqa: N802
+            if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+                return node
+            return self.replace_numeric_node(node)
+
+    mapper = ReportedNumberMapper()
+    transformed = mapper.visit(tree.body)
+    if mapper.unresolved_numeric:
+        return None
+    ast.fix_missing_locations(transformed)
+    return ast.unparse(transformed)
+
+
+def expr_matches_reported_lhs(
+    expr: str,
+    lhs: str,
+    entities: Dict[str, Dict[str, Any]],
+) -> bool:
+    try:
+        values = inside_checker.values_for_symbolic_expr(expr, entities)
+        symbolic_value = inside_checker.safe_eval_arithmetic(expr, values)
+        reported_lhs_value = inside_checker.safe_eval_arithmetic(lhs)
+    except inside_checker.InsideCheckerError:
+        return False
+    return inside_checker.decimal_equal(symbolic_value, reported_lhs_value)
+
+
+def repair_teacher_exprs_from_reported_lhs(
+    plan: Dict[str, Any],
+    entities: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    known_entities = {name: dict(entity) for name, entity in entities.items()}
+    prior_results_by_value: Dict[str, str] = {}
+
+    for step_name in student_formalizer.plan_step_names(plan):
+        step = plan[step_name]
+        if not isinstance(step, dict):
+            continue
+
+        reported_expr = student_formalizer.normalize_empty(step.get("reported_expr"))
+        if not reported_expr:
+            continue
+
+        try:
+            lhs, _ = inside_checker.split_reported_expr(str(reported_expr))
+        except inside_checker.InsideCheckerError:
+            continue
+
+        current_expr = student_formalizer.normalize_empty(step.get("expr"))
+        if not current_expr or not expr_matches_reported_lhs(str(current_expr), lhs, known_entities):
+            rebuilt_expr = build_expr_from_reported_lhs(lhs, known_entities, prior_results_by_value)
+            if rebuilt_expr and expr_matches_reported_lhs(rebuilt_expr, lhs, known_entities):
+                step["expr"] = rebuilt_expr
+
+        result = student_formalizer.normalize_empty(step.get("result"))
+        if result:
+            try:
+                result_value = inside_checker.parse_reported_rhs_value(str(reported_expr))
+            except inside_checker.InsideCheckerError:
+                continue
+            value_key = str(result_value.normalize())
+            prior_results_by_value.setdefault(value_key, str(result))
+            known_entities[str(result)] = {
+                "value": int(result_value) if result_value == result_value.to_integral_value() else float(result_value),
+                "unit": step.get("result_unit"),
+                "location": step_name,
+                "grand_unit": step.get("result_grand_unit"),
+                "expr": step.get("expr"),
+                "formalized_expr": step.get("expr"),
+            }
+
+    return plan
+
+
 def validate_teacher_plan(
     raw_plan: Dict[str, Any],
     problem_entities: Dict[str, Dict[str, Any]],
     teacher_answer: str,
+    calculation_trace: list[Dict[str, Any]],
 ) -> tuple[Dict[str, Any], Dict[str, Dict[str, Any]], list[Dict[str, Any]]]:
     try:
+        raw_plan = student_formalizer.prune_copy_steps_from_raw_plan(raw_plan)
+        raw_plan = student_formalizer.align_raw_plan_to_calculation_trace(raw_plan, calculation_trace)
         plan = student_formalizer.validate_and_normalize_student_plan(
             raw_plan,
             problem_entities,
@@ -312,6 +499,30 @@ def validate_teacher_plan(
             prefix="teacher_answer",
             source_label="TeacherAnswer.txt",
         )
+        plan, answer_literal_entities = student_formalizer.repair_plan_exprs_from_reported_lhs(
+            plan,
+            problem_entities,
+            answer_literal_entities,
+            prefix="teacher_answer",
+            source_label="TeacherAnswer.txt",
+        )
+        plan = student_formalizer.validate_and_normalize_student_plan(
+            plan,
+            {**problem_entities, **answer_literal_entities},
+            student_answer=teacher_answer,
+            plan_label="TeacherPlan",
+        )
+        plan = repair_teacher_exprs_from_reported_lhs(
+            plan,
+            {**problem_entities, **answer_literal_entities},
+        )
+        plan, additional_literal_entities = student_formalizer.materialize_numeric_literals_in_plan(
+            plan,
+            {**problem_entities, **answer_literal_entities},
+            prefix="teacher_answer",
+            source_label="TeacherAnswer.txt",
+        )
+        answer_literal_entities.update(additional_literal_entities)
         plan = student_formalizer.validate_and_normalize_student_plan(
             plan,
             {**problem_entities, **answer_literal_entities},
@@ -323,11 +534,17 @@ def validate_teacher_plan(
             teacher_answer,
             answer_label="lời giải giáo viên",
         )
-        student_formalizer.validate_reported_exprs_include_explicit_equations(
+        student_formalizer.validate_plan_covers_calculation_trace(
             plan,
-            teacher_answer,
-            answer_label="lời giải giáo viên",
+            calculation_trace,
+            plan_label="TeacherPlan",
         )
+        teacher_entities_for_validation = student_formalizer.merge_student_plan_into_entities(
+            plan,
+            problem_entities,
+            extra_entities=answer_literal_entities,
+        )
+        validate_teacher_expr_matches_reported_expr(plan, teacher_entities_for_validation)
     except student_formalizer.StudentAnswerFormalizerError as exc:
         raise TeacherAnswerFormalizerError(str(exc)) from exc
 
@@ -349,6 +566,44 @@ def validate_teacher_plan(
     return plan, answer_literal_entities, grounding_warnings
 
 
+def validate_teacher_expr_matches_reported_expr(
+    plan: Dict[str, Any],
+    teacher_entities: Dict[str, Dict[str, Any]],
+) -> None:
+    for step_name in student_formalizer.plan_step_names(plan):
+        step = plan[step_name]
+        if not isinstance(step, dict):
+            continue
+
+        expr = student_formalizer.normalize_empty(step.get("expr"))
+        reported_expr = student_formalizer.normalize_empty(step.get("reported_expr"))
+        if not expr or not reported_expr:
+            continue
+
+        try:
+            lhs, _ = inside_checker.split_reported_expr(str(reported_expr))
+            entity_values = inside_checker.values_for_symbolic_expr(str(expr), teacher_entities)
+            symbolic_value = inside_checker.safe_eval_arithmetic(str(expr), entity_values)
+            reported_lhs_value = inside_checker.safe_eval_arithmetic(lhs)
+            reported_rhs_value = inside_checker.parse_reported_rhs_value(str(reported_expr))
+        except inside_checker.InsideCheckerError as exc:
+            raise TeacherAnswerFormalizerError(
+                f"{step_name}.expr hoặc reported_expr không kiểm tra được: {exc}"
+            ) from exc
+
+        if not inside_checker.decimal_equal(reported_lhs_value, reported_rhs_value):
+            raise TeacherAnswerFormalizerError(
+                f"{step_name}.reported_expr tính sai trong lời giải giáo viên: {reported_expr!r}."
+            )
+
+        if not inside_checker.decimal_equal(symbolic_value, reported_lhs_value):
+            raise TeacherAnswerFormalizerError(
+                f"{step_name}.expr không khớp reported_expr. "
+                f"expr={expr!r} cho value {symbolic_value}, nhưng vế trái reported_expr "
+                f"{lhs!r} cho value {reported_lhs_value}."
+            )
+
+
 def run() -> None:
     try:
         ensure_dirs()
@@ -359,6 +614,13 @@ def run() -> None:
 
         raw_problem_entities = read_yaml_file(PROBLEM_ENTITIES_PATH, required=True)
         problem_entities = student_formalizer.validate_problem_entities(raw_problem_entities)
+        calculation_trace = student_formalizer.extract_calculation_trace(
+            problem,
+            teacher_answer,
+            answer_label="lời giải giáo viên",
+            allowed_grounding_values=student_formalizer.trace_allowed_grounding_values(problem_entities),
+        )
+        write_yaml_file(TEACHER_TRACE_PATH, {"CalculationTrace.yaml": calculation_trace})
 
         previous_error: Optional[str] = None
         last_validation_error: Optional[Exception] = None
@@ -371,6 +633,7 @@ def run() -> None:
                 problem,
                 problem_entities,
                 teacher_answer,
+                calculation_trace,
                 previous_error=previous_error,
             )
 
@@ -380,6 +643,7 @@ def run() -> None:
                     raw_teacher_plan,
                     problem_entities,
                     teacher_answer,
+                    calculation_trace,
                 )
             except TeacherAnswerFormalizerError as exc:
                 previous_error = str(exc)
@@ -392,7 +656,37 @@ def run() -> None:
             break
 
         if teacher_plan is None:
-            raise TeacherAnswerFormalizerError(str(last_validation_error))
+            try:
+                raw_trace_plan = student_formalizer.build_trace_derived_student_plan(
+                    calculation_trace,
+                    problem_entities,
+                )
+                candidate_plan, candidate_literal_entities, candidate_grounding_warnings = validate_teacher_plan(
+                    raw_trace_plan,
+                    problem_entities,
+                    teacher_answer,
+                    calculation_trace,
+                )
+            except TeacherAnswerFormalizerError as trace_exc:
+                raise TeacherAnswerFormalizerError(
+                    f"{last_validation_error}; trace-derived fallback cũng fail: {trace_exc}"
+                ) from trace_exc
+
+            teacher_plan = candidate_plan
+            answer_literal_entities = candidate_literal_entities
+            grounding_warnings = candidate_grounding_warnings
+            student_formalizer.write_log_items(
+                "TeacherAnswerFormalizer_trace_derived_plan",
+                [
+                    {
+                        "reason": (
+                            "LLM TeacherPlan retries failed; built TeacherPlan "
+                            "from grounded CalculationTrace."
+                        ),
+                        "previous_error": str(last_validation_error) if last_validation_error else None,
+                    }
+                ],
+            )
 
         teacher_entities = student_formalizer.merge_student_plan_into_entities(
             teacher_plan,
